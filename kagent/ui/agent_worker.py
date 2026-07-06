@@ -1,10 +1,11 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .. import db, llm
+from ..agent import CodeAgent
 
 
-class ChatWorker(QThread):
-    """后台线程：流式调用 LLM，逐 chunk 通过 signal 推送到主线程。"""
+class AgentWorker(QThread):
+    """后台线程：调用 coding agent，逐段输出工具执行与结果。"""
 
     chunk = pyqtSignal(str)
     done = pyqtSignal(str)
@@ -23,22 +24,20 @@ class ChatWorker(QThread):
 
     def run(self):
         try:
-            # 用户消息已由主线程保存到 DB，history 也已包含
-            # 首条消息生成会话标题
             if len(self.history) == 1:
                 title = llm.generate_title(self.message)
                 self.title_ready.emit(title)
                 db.rename_session(self.session_id, title)
 
-            full = ""
-            for piece in llm.stream_chat(self.history):
-                if self._stop:
-                    break
-                full += piece
-                self.chunk.emit(piece)
+            agent = CodeAgent()
+            report = agent.run(
+                self.history,
+                emit=self.chunk.emit,
+                should_stop=lambda: self._stop,
+            )
 
-            if full:
-                db.save_message(self.session_id, "assistant", full)
-            self.done.emit(full)
+            if report and not self._stop:
+                db.save_message(self.session_id, "assistant", report)
+            self.done.emit(report)
         except Exception as e:
             self.error.emit(str(e))

@@ -6,6 +6,7 @@
 
 - 桌面 GUI（非网页），原生窗口
 - 流式多轮对话（OpenAI Chat Completions）
+- Agent 模式（读文件 / 改文件 / 跑命令）
 - 多会话管理（侧边栏切换 / 新建 / 自动标题）
 - 会话历史持久化（SQLite）
 - Markdown 渲染 + 代码高亮
@@ -34,7 +35,7 @@ pip install -r requirements.txt
 ```env
 OPENAI_API_KEY=sk-xxx
 OPENAI_BASE_URL=https://jp-api.zhexueqi.xyz/v1
-MODEL=gpt-5.5
+MODEL=gpt-5.4-mini
 DB_PATH=./kagent.db
 ```
 
@@ -53,7 +54,9 @@ kagent/
 │   ├── config.py            # 配置加载
 │   ├── db.py                # SQLite 同步访问
 │   ├── llm.py               # OpenAI 流式封装
+│   ├── agent/               # 本地代码 agent + 工作区工具
 │   └── ui/
+│       ├── agent_worker.py  # Agent 后台线程
 │       ├── chat_worker.py   # QThread 流式 worker
 │       ├── main_window.py   # 主窗口 + 侧边栏 + 输入区
 │       └── markdown_view.py # Markdown 渲染 + 代码高亮
@@ -74,7 +77,11 @@ PyQt6 进程直接调用 OpenAI SDK，省去 FastAPI 中间层。后续若需 We
 ### 3. 同步 SQLite
 PyQt 与 asyncio 集成需要 qasync 等额外库，增加复杂度。改用标准库 `sqlite3` + `threading.Lock`，简洁稳定。
 
-### 4. 流式块整页重渲染
+### 4. 本地工具型 Agent
+Agent 模式会通过 OpenAI 的工具调用循环，按需读取文件、写入文件、并在工作区里运行命令。  
+这让它不仅能聊天，还能真正帮你做代码修改和验证。
+
+### 5. 流式块整页重渲染
 每次 chunk 到达时，从 DB 取已完成消息 + 当前流式缓冲，整体重新渲染。代码简单，1000 字以内无明显性能问题。
 
 ## 常见问题

@@ -84,7 +84,10 @@ def save_message(session_id: str, role: str, content: str) -> None:
 def get_messages(session_id: str) -> list[dict]:
     with _lock, _conn() as c:
         rows = c.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
+            "SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY id",
             (session_id,),
         ).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        return [
+            {"role": r["role"], "content": r["content"], "created_at": r["created_at"]}
+            for r in rows
+        ]

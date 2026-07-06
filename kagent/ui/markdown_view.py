@@ -4,9 +4,10 @@ import re
 import markdown
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import guess_lexer, get_lexer_by_name, TextLexer
+from pygments.lexers import TextLexer, get_lexer_by_name, guess_lexer
 
 
+_FORMATTER = HtmlFormatter(nowrap=True, style="monokai")
 _CODE_RE = re.compile(r"<pre><code(?:\s+class=\"([^\"]+)\")?>(.*?)</code></pre>", re.DOTALL)
 
 
@@ -24,13 +25,12 @@ def _highlight_code(match: re.Match) -> str:
             lexer = guess_lexer(code)
         except Exception:
             lexer = TextLexer()
-    formatter = HtmlFormatter(nowrap=True, style="default")
-    highlighted = highlight(code, lexer, formatter).strip()
+    highlighted = highlight(code, lexer, _FORMATTER).strip()
     return f'<pre><code class="hl">{highlighted}</code></pre>'
 
 
 def render(text: str) -> str:
-    """Markdown -> HTML，代码块用 Pygments 高亮。"""
+    """Render Markdown to HTML and highlight fenced code blocks."""
     if not text:
         return ""
     html_body = markdown.markdown(
@@ -41,9 +41,8 @@ def render(text: str) -> str:
             "markdown.extensions.sane_lists",
         ],
     )
-    html_body = _CODE_RE.sub(_highlight_code, html_body)
-    return html_body
+    return _CODE_RE.sub(_highlight_code, html_body)
 
 
 def highlight_css() -> str:
-    return HtmlFormatter(style="default").get_style_defs(".hl")
+    return _FORMATTER.get_style_defs(".hl")
