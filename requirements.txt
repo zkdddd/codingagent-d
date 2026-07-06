@@ -1,0 +1,5 @@
+PyQt6>=6.6.0
+openai>=1.50.0
+python-dotenv>=1.0.0
+markdown>=3.5
+pygments>=2.17
