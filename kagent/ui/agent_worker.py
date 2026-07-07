@@ -23,6 +23,16 @@ class AgentWorker(QThread):
     def stop(self):
         self._stop = True
 
+    @staticmethod
+    def _final_answer_from_report(report: str) -> str:
+        marker = "### 结果\n\n"
+        idx = report.rfind(marker)
+        if idx != -1:
+            text = report[idx + len(marker):].strip()
+            if text:
+                return text
+        return report.strip()
+
     def run(self):
         try:
             if len(self.history) == 1:
@@ -37,9 +47,10 @@ class AgentWorker(QThread):
                 on_event=self.tool_event.emit,
                 should_stop=lambda: self._stop,
             )
+            answer = self._final_answer_from_report(report)
 
-            if report and not self._stop:
-                db.save_message(self.session_id, "assistant", report)
-            self.done.emit(report)
+            if answer and not self._stop:
+                db.save_message(self.session_id, "assistant", answer)
+            self.done.emit(answer)
         except Exception as e:
             self.error.emit(str(e))

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QFont, QFontMetrics, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QFrame,
@@ -1409,7 +1409,8 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         self.worker.title_ready.connect(self._on_title)
         if isinstance(self.worker, AgentWorker):
             self.worker.tool_event.connect(self._on_tool_event)
-        self.worker.start()
+        worker = self.worker
+        QTimer.singleShot(30, worker.start)
 
     def _on_chunk(self, piece: str):
         self._streaming_buf += piece
