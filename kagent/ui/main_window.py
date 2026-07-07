@@ -635,6 +635,7 @@ class ChatWindow(QMainWindow):
         self._agent_trace_card: ToolTraceCard | None = None
         self._agent_trace_row: QWidget | None = None
         self._tool_trace_events: list[dict[str, Any]] = []
+        self._render_seq = 0
 
         root = QWidget()
         root.setObjectName("root")
@@ -1296,12 +1297,16 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         prev_value = scrollbar.value()
         prev_max = scrollbar.maximum()
         stick_to_bottom = prev_value >= max(0, prev_max - 4)
+        has_content = bool(msgs) or streaming_html is not None or thinking or error_text is not None
+
+        self._render_seq += 1
+        render_seq = self._render_seq
 
         self.chat_scroll.setUpdatesEnabled(False)
+        self.chat_scroll.viewport().setUpdatesEnabled(False)
         self.chat_content.setUpdatesEnabled(False)
         self._streaming_card = None
         self._streaming_row = None
-        last_widget: QWidget | None = None
 
         try:
             self._clear_feed()
@@ -1311,7 +1316,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{
                 empty = self._build_empty_state()
                 self.chat_layout.addWidget(empty, 0, Qt.AlignmentFlag.AlignHCenter)
                 self.chat_layout.addStretch(1)
-                last_widget = empty
             else:
                 for m in msgs:
                     row = self._build_message_row(
@@ -1320,7 +1324,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{
                         created_at=m.get("created_at"),
                     )
                     self.chat_layout.addWidget(row)
-                    last_widget = row
 
                 if self.agent_btn.isChecked() and (
                     self._tool_trace_events
@@ -1328,9 +1331,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{
                     or thinking
                     or error_text is not None
                 ):
-                    trace = self._ensure_agent_trace_card()
-                    if trace is not None:
-                        last_widget = trace
+                    self._ensure_agent_trace_card()
 
                 if streaming_html is not None or thinking:
                     row = self._build_message_row(
@@ -1341,7 +1342,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{
                         thinking=thinking,
                     )
                     self.chat_layout.addWidget(row)
-                    last_widget = row
 
                 if error_text is not None:
                     row = self._build_message_row(
@@ -1351,24 +1351,58 @@ QScrollBar::add-page, QScrollBar::sub-page {{
                         error=True,
                     )
                     self.chat_layout.addWidget(row)
-                    last_widget = row
 
                 self.chat_layout.addStretch(1)
-
-            self.chat_content.adjustSize()
-            if last_widget is not None:
-                target = scrollbar.maximum()
-                if not (streaming_html is not None or thinking or error_text is not None or stick_to_bottom):
-                    target = min(prev_value, scrollbar.maximum())
-                scrollbar.setValue(target)
-
-            self._refresh_chat_header()
-            self._update_status()
         finally:
-            self.chat_content.setUpdatesEnabled(True)
-            self.chat_scroll.setUpdatesEnabled(True)
-            self.chat_scroll.viewport().update()
-            self._update_scroll_to_bottom_button()
+            QTimer.singleShot(
+                0,
+                lambda seq=render_seq,
+                value=prev_value,
+                stick=stick_to_bottom,
+                content=has_content,
+                stream_html=streaming_html,
+                is_thinking=thinking,
+                is_error=error_text is not None: self._finish_render(
+                    seq,
+                    value,
+                    stick,
+                    content,
+                    stream_html,
+                    is_thinking,
+                    is_error,
+                ),
+            )
+
+    def _finish_render(
+        self,
+        render_seq: int,
+        prev_value: int,
+        stick_to_bottom: bool,
+        has_content: bool,
+        streaming_html: str | None,
+        thinking: bool,
+        is_error: bool,
+    ) -> None:
+        if render_seq != self._render_seq:
+            return
+
+        scrollbar = self.chat_scroll.verticalScrollBar()
+        self.chat_layout.activate()
+        self.chat_content.adjustSize()
+
+        if has_content:
+            target = scrollbar.maximum()
+            if not (streaming_html is not None or thinking or is_error or stick_to_bottom):
+                target = min(prev_value, scrollbar.maximum())
+            scrollbar.setValue(target)
+
+        self._refresh_chat_header()
+        self._update_status()
+        self.chat_content.setUpdatesEnabled(True)
+        self.chat_scroll.viewport().setUpdatesEnabled(True)
+        self.chat_scroll.setUpdatesEnabled(True)
+        self.chat_scroll.viewport().update()
+        self._update_scroll_to_bottom_button()
 
     def _on_tool_event(self, event: dict[str, Any]):
         trace = self._ensure_agent_trace_card()
