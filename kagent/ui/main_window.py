@@ -1231,68 +1231,82 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         thinking: bool = False,
         error_text: str | None = None,
     ):
+        scrollbar = self.chat_scroll.verticalScrollBar()
+        prev_value = scrollbar.value()
+        prev_max = scrollbar.maximum()
+        stick_to_bottom = prev_value >= max(0, prev_max - 4)
+
+        self.chat_scroll.setUpdatesEnabled(False)
+        self.chat_content.setUpdatesEnabled(False)
         self._streaming_card = None
         self._streaming_row = None
-        self._clear_feed()
-
         last_widget: QWidget | None = None
 
-        if not msgs and streaming_html is None and not thinking and error_text is None:
-            self.chat_layout.addStretch(1)
-            empty = self._build_empty_state()
-            self.chat_layout.addWidget(empty, 0, Qt.AlignmentFlag.AlignHCenter)
-            self.chat_layout.addStretch(1)
-            last_widget = empty
-        else:
-            for m in msgs:
-                row = self._build_message_row(
-                    m["role"],
-                    m["content"],
-                    created_at=m.get("created_at"),
-                )
-                self.chat_layout.addWidget(row)
-                last_widget = row
+        try:
+            self._clear_feed()
 
-            if self.agent_btn.isChecked() and (
-                self._tool_trace_events
-                or streaming_html is not None
-                or thinking
-                or error_text is not None
-            ):
-                trace = self._ensure_agent_trace_card()
-                if trace is not None:
-                    last_widget = trace
+            if not msgs and streaming_html is None and not thinking and error_text is None:
+                self.chat_layout.addStretch(1)
+                empty = self._build_empty_state()
+                self.chat_layout.addWidget(empty, 0, Qt.AlignmentFlag.AlignHCenter)
+                self.chat_layout.addStretch(1)
+                last_widget = empty
+            else:
+                for m in msgs:
+                    row = self._build_message_row(
+                        m["role"],
+                        m["content"],
+                        created_at=m.get("created_at"),
+                    )
+                    self.chat_layout.addWidget(row)
+                    last_widget = row
 
-            if streaming_html is not None or thinking:
-                row = self._build_message_row(
-                    "assistant",
-                    streaming_html or "",
-                    created_at=self._streaming_time,
-                    streaming=streaming_html is not None,
-                    thinking=thinking,
-                )
-                self.chat_layout.addWidget(row)
-                last_widget = row
+                if self.agent_btn.isChecked() and (
+                    self._tool_trace_events
+                    or streaming_html is not None
+                    or thinking
+                    or error_text is not None
+                ):
+                    trace = self._ensure_agent_trace_card()
+                    if trace is not None:
+                        last_widget = trace
 
-            if error_text is not None:
-                row = self._build_message_row(
-                    "assistant",
-                    error_text,
-                    created_at=self._streaming_time,
-                    error=True,
-                )
-                self.chat_layout.addWidget(row)
-                last_widget = row
+                if streaming_html is not None or thinking:
+                    row = self._build_message_row(
+                        "assistant",
+                        streaming_html or "",
+                        created_at=self._streaming_time,
+                        streaming=streaming_html is not None,
+                        thinking=thinking,
+                    )
+                    self.chat_layout.addWidget(row)
+                    last_widget = row
 
-            self.chat_layout.addStretch(1)
+                if error_text is not None:
+                    row = self._build_message_row(
+                        "assistant",
+                        error_text,
+                        created_at=self._streaming_time,
+                        error=True,
+                    )
+                    self.chat_layout.addWidget(row)
+                    last_widget = row
 
-        self.chat_content.adjustSize()
-        if last_widget is not None:
-            self.chat_scroll.ensureWidgetVisible(last_widget, 0, 24)
-            self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum())
+                self.chat_layout.addStretch(1)
 
-        self._refresh_chat_header()
-        self._update_status()
+            self.chat_content.adjustSize()
+            if last_widget is not None:
+                target = scrollbar.maximum()
+                if not (streaming_html is not None or thinking or error_text is not None or stick_to_bottom):
+                    target = min(prev_value, scrollbar.maximum())
+                scrollbar.setValue(target)
+
+            self._refresh_chat_header()
+            self._update_status()
+        finally:
+            self.chat_content.setUpdatesEnabled(True)
+            self.chat_scroll.setUpdatesEnabled(True)
+            self.chat_scroll.viewport().update()
 
     def _on_tool_event(self, event: dict[str, Any]):
         trace = self._ensure_agent_trace_card()
