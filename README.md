@@ -45,6 +45,16 @@ DB_PATH=./kagent.db
 python main.py
 ```
 
+### 4. 开发热重载
+
+开发时可以用热重载模式，保存 `.py` 或 `.env` 后会自动重启进程：
+
+```bash
+python main.py --dev-reload
+```
+
+Windows 下也可以直接双击 `run-dev.bat`。
+
 ## 项目结构
 
 ```
