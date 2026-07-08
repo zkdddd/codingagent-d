@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ from .workspace import WorkspaceError, WorkspaceTools
 EmitFn = Callable[[str], None]
 EventFn = Callable[[dict[str, Any]], None]
 StopFn = Callable[[], bool]
-ConfirmFn = Callable[[str, str, dict[str, Any], str | None, int | None], bool]
+ConfirmFn = Callable[[str, str, dict[str, Any], str | None, int | None, dict[str, Any]], bool]
 
 AGENT_WORKFLOW_HINT = """
 Use the workspace tools in this order when it helps:
@@ -32,6 +33,7 @@ Use the workspace tools in this order when it helps:
 
 Prefer small, reviewable changes. If a command fails, inspect the output and fix the real cause before continuing.
 If the task requires checking files, changing files, renaming paths, or running commands, do not stop after saying what you will do. In the same turn, call the next tool and continue the task.
+Prefer low-risk read and validation steps first. Avoid destructive commands or broad file changes unless they are clearly needed for the user's request.
 """
 
 
@@ -292,6 +294,89 @@ class CodeAgent:
     VALIDATION_TOOLS = {"run_command"}
     MAX_VALIDATION_REPAIR_ROUNDS = 3
     MAX_VALIDATION_PLAN_COMMANDS = 2
+    RISK_LEVELS = ("safe", "low", "medium", "high", "critical")
+    RISK_LABELS = {
+        "safe": "Safe",
+        "low": "Low risk",
+        "medium": "Medium risk",
+        "high": "High risk",
+        "critical": "Critical",
+    }
+    SENSITIVE_PATH_NAMES = {
+        ".env",
+        ".gitignore",
+        "main.py",
+        "requirements.txt",
+        "pyproject.toml",
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "cargo.toml",
+        "cargo.lock",
+        "go.mod",
+        "go.sum",
+    }
+    SENSITIVE_PATH_PARTS = {
+        ".git",
+        ".github",
+        ".vscode",
+        ".idea",
+    }
+    SAFE_COMMAND_PATTERNS = (
+        r"(^| )dir( |$)",
+        r"(^| )ls( |$)",
+        r"(^| )pwd( |$)",
+        r"(^| )rg( |$)",
+        r"(^| )git status( |$)",
+        r"(^| )git diff( |$)",
+        r"(^| )type( |$)",
+        r"(^| )cat( |$)",
+        r"(^| )get-content( |$)",
+        r"(^| )python(?:\.exe)? -m py_compile( |$)",
+        r"(^| )python(?:\.exe)? -m pytest( |$)",
+        r"-m py_compile( |$)",
+        r"-m pytest( |$)",
+        r"(^| )pytest( |$)",
+        r"(^| )ruff check( |$)",
+        r"(^| )mypy( |$)",
+        r"(^| )(npm|pnpm|yarn) (run )?(lint|test|typecheck|build)( |$)",
+        r"(^| )cargo test( |$)",
+        r"(^| )go test( |$)",
+    )
+    CRITICAL_COMMAND_PATTERNS = (
+        "rm -rf",
+        "rm -r ",
+        "del /f",
+        "del /q",
+        "erase /f",
+        "rd /s",
+        "rmdir /s",
+        "remove-item -recurse",
+        "remove-item -force",
+        "git reset --hard",
+        "git clean -fd",
+        "format ",
+        "shutdown ",
+    )
+    HIGH_RISK_COMMAND_PATTERNS = (
+        "git push",
+        "git commit",
+        "git merge",
+        "git rebase",
+        "pip install",
+        "pip uninstall",
+        "npm install",
+        "npm uninstall",
+        "pnpm install",
+        "pnpm remove",
+        "yarn add",
+        "yarn remove",
+        "set-content ",
+        "add-content ",
+        "out-file ",
+        "start-process ",
+    )
 
     def __init__(
         self,
@@ -428,6 +513,274 @@ class CodeAgent:
         return "error" not in result
 
     @classmethod
+    def _risk_rank(cls, level: str) -> int:
+        try:
+            return cls.RISK_LEVELS.index(str(level).strip().lower())
+        except ValueError:
+            return cls.RISK_LEVELS.index("medium")
+
+    @classmethod
+    def _build_tool_policy(
+        cls,
+        *,
+        level: str,
+        reason: str,
+        destructive: bool = False,
+        approval_required: bool | None = None,
+    ) -> dict[str, Any]:
+        normalized = str(level or "medium").strip().lower()
+        if normalized not in cls.RISK_LEVELS:
+            normalized = "medium"
+        if approval_required is None:
+            approval_required = destructive or cls._risk_rank(normalized) >= cls._risk_rank("medium")
+        return {
+            "risk_level": normalized,
+            "risk_label": cls.RISK_LABELS.get(normalized, normalized.title()),
+            "approval_required": bool(approval_required),
+            "destructive": bool(destructive),
+            "reason": reason.strip() or "This action changes the workspace.",
+        }
+
+    @classmethod
+    def _is_sensitive_path(cls, raw_path: str) -> bool:
+        path = Path(str(raw_path or ""))
+        name = path.name.lower()
+        parts = {part.lower() for part in path.parts}
+        if name in cls.SENSITIVE_PATH_NAMES:
+            return True
+        if name.startswith(".env"):
+            return True
+        return bool(parts & cls.SENSITIVE_PATH_PARTS)
+
+    @staticmethod
+    def _patch_change_counts(patch: str) -> tuple[int, int]:
+        added = 0
+        removed = 0
+        for line in str(patch or "").splitlines():
+            if line.startswith(("diff --git ", "index ", "@@ ", "+++ ", "--- ")):
+                continue
+            if line.startswith("+"):
+                added += 1
+            elif line.startswith("-"):
+                removed += 1
+        return added, removed
+
+    @staticmethod
+    def _normalize_command(command: str) -> str:
+        return " ".join(str(command or "").strip().lower().split())
+
+    @classmethod
+    def _command_tool_policy(cls, args: dict[str, Any], display_args: dict[str, Any]) -> dict[str, Any]:
+        command = str(display_args.get("command") or args.get("command") or "")
+        cwd = str(display_args.get("cwd") or args.get("cwd") or ".")
+        normalized = cls._normalize_command(command)
+        if not normalized:
+            return cls._build_tool_policy(
+                level="medium",
+                reason="This command could not be classified.",
+            )
+
+        for pattern in cls.CRITICAL_COMMAND_PATTERNS:
+            if pattern in normalized:
+                return cls._build_tool_policy(
+                    level="critical",
+                    destructive=True,
+                    reason=f"This command includes a destructive shell pattern: `{pattern}`.",
+                )
+
+        if re.search(r"(^| )(del|erase|rm|rd|rmdir|remove-item)( |$)", normalized):
+            return cls._build_tool_policy(
+                level="critical",
+                destructive=True,
+                reason="This command may delete files or folders.",
+            )
+
+        if any(token in normalized for token in ("&&", "||", ";")):
+            return cls._build_tool_policy(
+                level="high",
+                reason="This is a chained shell command, which is harder to predict and review.",
+            )
+
+        if any(token in normalized for token in (">", ">>")):
+            return cls._build_tool_policy(
+                level="high",
+                reason="This command writes output through shell redirection.",
+            )
+
+        for pattern in cls.HIGH_RISK_COMMAND_PATTERNS:
+            if pattern in normalized:
+                return cls._build_tool_policy(
+                    level="high",
+                    reason=f"This command changes the environment or repository state: `{pattern}`.",
+                )
+
+        for pattern in cls.SAFE_COMMAND_PATTERNS:
+            if re.search(pattern, normalized):
+                return cls._build_tool_policy(
+                    level="low",
+                    approval_required=False,
+                    reason=f"This looks like a read-only or validation command in `{cwd}`.",
+                )
+
+        return cls._build_tool_policy(
+            level="medium",
+            reason=f"This command runs arbitrary shell code in `{cwd}` and should be reviewed once.",
+        )
+
+    @classmethod
+    def _tool_policy(
+        cls,
+        name: str,
+        args: dict[str, Any],
+        display_args: dict[str, Any],
+        preview_text: str | None,
+    ) -> dict[str, Any]:
+        if name in cls.INSPECTION_TOOLS:
+            return cls._build_tool_policy(
+                level="safe",
+                approval_required=False,
+                reason="This tool only reads workspace state.",
+            )
+
+        if name == "run_command":
+            return cls._command_tool_policy(args, display_args)
+
+        if name == "apply_patch":
+            patch_info = display_args if isinstance(display_args, dict) else {}
+            files_touched = [str(path) for path in patch_info.get("files_touched", [])]
+            file_count = int(patch_info.get("file_count", 0) or 0)
+            added, removed = cls._patch_change_counts(str(preview_text or args.get("patch") or ""))
+            total_changed_lines = added + removed
+            if any(cls._is_sensitive_path(path) for path in files_touched):
+                return cls._build_tool_policy(
+                    level="high",
+                    reason="This patch touches a sensitive project or environment file.",
+                )
+            if file_count >= 5 or total_changed_lines >= 200:
+                return cls._build_tool_policy(
+                    level="high",
+                    reason=f"This patch changes {file_count} files and about {total_changed_lines} lines.",
+                )
+            if file_count >= 3 or total_changed_lines >= 80:
+                return cls._build_tool_policy(
+                    level="medium",
+                    reason=f"This patch changes multiple files or a larger diff ({total_changed_lines} lines).",
+                )
+            return cls._build_tool_policy(
+                level="low",
+                approval_required=False,
+                reason=f"This is a focused patch ({file_count} file, about {total_changed_lines} changed lines).",
+            )
+
+        if name == "write_file":
+            path = str(display_args.get("path") or args.get("path") or "")
+            exists = bool(display_args.get("exists", False))
+            line_count = int(display_args.get("line_count", 0) or 0)
+            if cls._is_sensitive_path(path):
+                return cls._build_tool_policy(
+                    level="high",
+                    reason=f"This overwrites sensitive file `{path}`.",
+                )
+            if exists and line_count >= 200:
+                return cls._build_tool_policy(
+                    level="high",
+                    reason=f"This fully overwrites existing file `{path}` with {line_count} lines.",
+                )
+            if exists:
+                return cls._build_tool_policy(
+                    level="medium",
+                    reason=f"This fully overwrites existing file `{path}`.",
+                )
+            return cls._build_tool_policy(
+                level="low",
+                approval_required=False,
+                reason=f"This creates a new file `{path}`.",
+            )
+
+        if name == "rename_path":
+            source_path = str(display_args.get("source_path") or args.get("source_path") or "")
+            target_path = str(display_args.get("target_path") or args.get("target_path") or "")
+            item_type = str(display_args.get("item_type") or "item")
+            if item_type == "directory":
+                return cls._build_tool_policy(
+                    level="high",
+                    reason=f"This renames a directory: `{source_path}` -> `{target_path}`.",
+                )
+            if cls._is_sensitive_path(source_path) or cls._is_sensitive_path(target_path):
+                return cls._build_tool_policy(
+                    level="high",
+                    reason="This rename touches a sensitive path.",
+                )
+            return cls._build_tool_policy(
+                level="medium",
+                reason=f"This renames file `{source_path}` -> `{target_path}`.",
+            )
+
+        if name == "copy_path":
+            source_path = str(display_args.get("source_path") or args.get("source_path") or "")
+            target_path = str(display_args.get("target_path") or args.get("target_path") or "")
+            item_type = str(display_args.get("item_type") or "item")
+            item_count = int(display_args.get("item_count", 0) or 0)
+            if item_type == "directory" or item_count >= 50:
+                return cls._build_tool_policy(
+                    level="medium",
+                    reason=f"This copies a larger tree from `{source_path}` to `{target_path}`.",
+                )
+            return cls._build_tool_policy(
+                level="low",
+                approval_required=False,
+                reason=f"This copies `{source_path}` to `{target_path}`.",
+            )
+
+        if name == "delete_path":
+            path = str(display_args.get("path") or args.get("path") or "")
+            item_type = str(display_args.get("item_type") or "item")
+            item_count = int(display_args.get("item_count", 0) or 0)
+            if item_type == "directory" and (item_count >= 20 or cls._is_sensitive_path(path)):
+                return cls._build_tool_policy(
+                    level="critical",
+                    destructive=True,
+                    reason=f"This deletes directory `{path}` with {item_count} items.",
+                )
+            return cls._build_tool_policy(
+                level="high",
+                destructive=True,
+                reason=f"This deletes {item_type} `{path}`.",
+            )
+
+        if name == "make_directory":
+            path = str(display_args.get("path") or args.get("path") or "")
+            if cls._is_sensitive_path(path):
+                return cls._build_tool_policy(
+                    level="medium",
+                    reason=f"This creates or reuses a sensitive directory path `{path}`.",
+                )
+            return cls._build_tool_policy(
+                level="low",
+                approval_required=False,
+                reason=f"This creates directory `{path}`.",
+            )
+
+        if name in {"rollback_last_change", "rollback_change"}:
+            path_count = int(display_args.get("path_count", 0) or 0)
+            superseded = int(display_args.get("superseded_active_count", 0) or 0)
+            if superseded > 0 or path_count >= 4:
+                return cls._build_tool_policy(
+                    level="medium",
+                    reason="This rollback can replace several newer workspace changes.",
+                )
+            return cls._build_tool_policy(
+                level="low",
+                approval_required=False,
+                reason="This rollback restores the last recorded workspace state.",
+            )
+
+        return cls._build_tool_policy(
+            level="medium",
+            reason="This tool changes workspace state.",
+        )
+
+    @classmethod
     def _paths_touched_by_tool(cls, name: str, result: dict[str, Any]) -> list[str]:
         if not isinstance(result, dict):
             return []
@@ -454,26 +807,6 @@ class CodeAgent:
         if name in {"delete_path", "make_directory"}:
             return [str(result["path"])] if result.get("path") else []
         return []
-
-    @staticmethod
-    def _validation_prompt(changed_paths: set[str]) -> str:
-        files = ", ".join(sorted(changed_paths)[:8]) if changed_paths else "the changed files"
-        return (
-            "You changed workspace files and are about to finish. "
-            f"Before the final answer, run at least one validation command for {files}. "
-            "Choose the most relevant lightweight check for the project and the edited files. "
-            "If no meaningful validation exists, explicitly explain why."
-        )
-
-    @staticmethod
-    def _validation_failure_prompt(changed_paths: set[str], summary: str | None) -> str:
-        files = ", ".join(sorted(changed_paths)[:8]) if changed_paths else "the changed files"
-        detail = f" Last validation summary: {summary}." if summary else ""
-        return (
-            "The last validation failed after you changed workspace files."
-            f"{detail} Inspect the failure, fix the real issue, and validate again before finishing. "
-            f"Focus on {files}."
-        )
 
     @staticmethod
     def _shell_command(parts: list[str]) -> str:
@@ -1015,26 +1348,13 @@ class CodeAgent:
             return str(preview["preview"])
         return None
 
-    @staticmethod
-    def _tool_requires_approval(name: str) -> bool:
-        return name in {
-            "apply_patch",
-            "write_file",
-            "rename_path",
-            "copy_path",
-            "delete_path",
-            "make_directory",
-            "run_command",
-            "rollback_last_change",
-            "rollback_change",
-        }
-
     def _tool_report_section(
         self,
         name: str,
         args: dict[str, Any],
         result: dict[str, Any],
         preview: str | None = None,
+        policy: dict[str, Any] | None = None,
     ) -> str:
         parts = [
             f"#### `{name}`",
@@ -1043,6 +1363,21 @@ class CodeAgent:
             "",
             self._json_block(args),
         ]
+        if policy:
+            parts.extend(
+                [
+                    "**Policy**",
+                    "",
+                    self._json_block(
+                        {
+                            "risk_level": policy.get("risk_level"),
+                            "approval_required": policy.get("approval_required"),
+                            "destructive": policy.get("destructive"),
+                            "reason": policy.get("reason"),
+                        }
+                    ),
+                ]
+            )
         if preview:
             parts.extend(["**预览**", "", f"```diff\n{preview}\n```", ""])
         parts.extend(
@@ -1105,6 +1440,7 @@ class CodeAgent:
 
         display_args = self._tool_display_args(name, args)
         preview_text = self._tool_preview_text(name, args)
+        policy = self._tool_policy(name, args, display_args, preview_text)
         self._emit_event(
             on_event,
             {
@@ -1112,6 +1448,7 @@ class CodeAgent:
                 "call_id": call_id,
                 "name": name,
                 "args": display_args,
+                "policy": policy,
                 "round": round_idx,
             },
         )
@@ -1124,12 +1461,13 @@ class CodeAgent:
                     "name": name,
                     "args": display_args,
                     "preview": preview_text,
+                    "policy": policy,
                     "round": round_idx,
                 },
             )
 
         approved = True
-        if self._tool_requires_approval(name) and self.confirm_tool is not None:
+        if bool(policy.get("approval_required")) and self.confirm_tool is not None:
             approved = bool(
                 self.confirm_tool(
                     call_id,
@@ -1137,13 +1475,14 @@ class CodeAgent:
                     display_args,
                     preview_text,
                     round_idx,
+                    policy,
                 )
             )
 
         if not approved:
             result = {
                 "ok": False,
-                "error": "Action rejected by user approval gate.",
+                "error": f"Action rejected by user approval gate ({policy.get('risk_label', 'Risk review')}).",
                 "rejected": True,
             }
         else:
@@ -1168,6 +1507,7 @@ class CodeAgent:
                 "name": name,
                 "args": display_args,
                 "result": result,
+                "policy": policy,
                 "round": round_idx,
                 "ok": result_ok,
             },
@@ -1175,7 +1515,13 @@ class CodeAgent:
         self._emit(
             emit,
             report_parts,
-            self._tool_report_section(name, display_args, result, preview=preview_text),
+            self._tool_report_section(
+                name,
+                display_args,
+                result,
+                preview=preview_text,
+                policy=policy,
+            ),
         )
         return result, result_ok, display_args, preview_text
 

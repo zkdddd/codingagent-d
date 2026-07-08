@@ -1,6 +1,5 @@
 import html
 import json
-import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -30,11 +29,9 @@ from .. import db
 from ..agent import WorkspaceTools
 from ..config import MODEL
 from .agent_worker import AgentWorker
-from .chat_worker import ChatWorker
 from .markdown_view import highlight_css, render
 
 THINKING_PLACEHOLDER_DELAY_MS = 220
-STREAM_RENDER_INTERVAL_MS = 40
 WORKER_STOP_GRACE_MS = 1500
 
 
@@ -255,6 +252,22 @@ def _preview_markdown_block(preview: str) -> str:
     return f"```{fence}\n{preview}\n```"
 
 
+def _tool_policy_label(policy: dict[str, Any] | None) -> str:
+    if not isinstance(policy, dict):
+        return ""
+    label = str(policy.get("risk_label") or "").strip()
+    if label:
+        return label
+    level = str(policy.get("risk_level") or "").strip()
+    return level.title() if level else ""
+
+
+def _tool_policy_reason(policy: dict[str, Any] | None) -> str:
+    if not isinstance(policy, dict):
+        return ""
+    return str(policy.get("reason") or "").strip()
+
+
 def _rollback_change_type_label(action: str) -> str:
     mapping = {
         "update": "Text update",
@@ -343,12 +356,19 @@ def _tool_event_markdown(
     round_idx: int | None = None,
     status: str | None = None,
     preview: str | None = None,
+    policy: dict[str, Any] | None = None,
 ) -> str:
     parts: list[str] = [f"### `{name}`"]
     if round_idx is not None:
         parts.append(f"**轮次** 第 {round_idx} 轮")
     if status:
         parts.append(f"**状态** {status}")
+    risk_label = _tool_policy_label(policy)
+    risk_reason = _tool_policy_reason(policy)
+    if risk_label:
+        parts.append(f"**Risk** {risk_label}")
+    if risk_reason:
+        parts.append(f"**Why** {risk_reason}")
     if preview:
         parts.append("**预览**")
         parts.append(_preview_markdown_block(preview))
@@ -374,7 +394,12 @@ def _tool_event_summary(
     args: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
     preview: str | None = None,
+    policy: dict[str, Any] | None = None,
 ) -> str:
+    policy_prefix = ""
+    risk_label = _tool_policy_label(policy)
+    if risk_label:
+        policy_prefix = f"[{risk_label}] "
     if isinstance(result, dict):
         summary = str(result.get("summary") or "").strip()
         if summary:
@@ -526,7 +551,7 @@ def _looks_like_agent_task(text: str) -> bool:
 class InputBox(QTextEdit):
     def __init__(self, on_send):
         super().__init__()
-        self.setPlaceholderText("输入消息… Enter 发送 · Shift+Enter 换行")
+        self.setPlaceholderText("描述你的任务，Agent 会读文件、改文件、运行命令… Enter 发送 · Shift+Enter 换行")
         self.setMinimumHeight(62)
         self.setMaximumHeight(88)
         self.setFont(QFont("Microsoft YaHei", 10))
@@ -675,6 +700,7 @@ class ToolLogEntry(QFrame):
         self.call_id = call_id
         self._width = width
         self._preview: str | None = None
+        self._policy: dict[str, Any] | None = None
         self._summary_full = "等待工具输出..."
         self._approval_pending = False
         self._actions: list[dict[str, str]] = []
@@ -723,6 +749,11 @@ class ToolLogEntry(QFrame):
             "border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700;"
         )
 
+        self.risk_chip = QLabel("")
+        self.risk_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.risk_chip.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.risk_chip.setVisible(False)
+
         header.addWidget(self.toggle_btn)
         header.addWidget(self.name_label)
         if round_idx is not None:
@@ -730,6 +761,7 @@ class ToolLogEntry(QFrame):
             header.addWidget(self.round_label)
         header.addWidget(self.summary_label, 1)
         header.addStretch(1)
+        header.addWidget(self.risk_chip)
         header.addWidget(self.status_chip)
         layout.addLayout(header)
 
@@ -799,6 +831,60 @@ class ToolLogEntry(QFrame):
         self.toggle_btn.setToolTip("收起工具详情" if expanded else "展开工具详情")
         self.updateGeometry()
 
+    def _risk_chip_style(self, level: str) -> str:
+        normalized = str(level or "").strip().lower()
+        if normalized == "critical":
+            return (
+                "background: rgba(239, 68, 68, 0.18); color: #FECACA; "
+                "border: 1px solid rgba(239, 68, 68, 0.34); "
+                "border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700;"
+            )
+        if normalized == "high":
+            return (
+                "background: rgba(249, 115, 22, 0.18); color: #FED7AA; "
+                "border: 1px solid rgba(249, 115, 22, 0.34); "
+                "border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700;"
+            )
+        if normalized == "medium":
+            return (
+                "background: rgba(234, 179, 8, 0.16); color: #FEF08A; "
+                "border: 1px solid rgba(234, 179, 8, 0.28); "
+                "border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700;"
+            )
+        if normalized == "low":
+            return (
+                "background: rgba(34, 197, 94, 0.14); color: #BBF7D0; "
+                "border: 1px solid rgba(34, 197, 94, 0.24); "
+                "border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700;"
+            )
+        return (
+            "background: rgba(148, 163, 184, 0.14); color: #CBD5E1; "
+            "border: 1px solid rgba(148, 163, 184, 0.22); "
+            "border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700;"
+        )
+
+    def _approval_prompt_text(self) -> str:
+        risk_label = _tool_policy_label(self._policy)
+        risk_reason = _tool_policy_reason(self._policy)
+        if risk_label and risk_reason:
+            return f"Approval required: {risk_label}. {risk_reason}"
+        if risk_label:
+            return f"Approval required: {risk_label}."
+        return "Approval required before continuing."
+
+    def _set_policy(self, policy: dict[str, Any] | None) -> None:
+        self._policy = dict(policy) if isinstance(policy, dict) else None
+        label = _tool_policy_label(self._policy)
+        if not label:
+            self.risk_chip.clear()
+            self.risk_chip.setVisible(False)
+            return
+        self.risk_chip.setText(label)
+        self.risk_chip.setStyleSheet(
+            self._risk_chip_style(str((self._policy or {}).get("risk_level") or ""))
+        )
+        self.risk_chip.setVisible(True)
+
     def _submit_approval(self, approved: bool) -> None:
         if not self._approval_pending:
             return
@@ -807,6 +893,9 @@ class ToolLogEntry(QFrame):
         self.reject_btn.setEnabled(False)
         self.approval_label.setText(
             "已允许，继续执行中…" if approved else "已拒绝，正在返回结果…"
+        )
+        self.approval_label.setText(
+            "Approved. Continuing..." if approved else "Rejected. Returning result..."
         )
         self.approval_decided.emit(self.call_id, approved)
 
@@ -819,6 +908,7 @@ class ToolLogEntry(QFrame):
         self._approval_pending = pending
         if pending:
             self.approval_label.setText("需要你的确认后继续执行")
+            self.approval_label.setText(self._approval_prompt_text())
             self.allow_btn.setEnabled(True)
             self.reject_btn.setEnabled(True)
             self.approval_bar.setVisible(True)
@@ -869,12 +959,15 @@ class ToolLogEntry(QFrame):
         error: bool = False,
         preview: str | None = None,
         approval_pending: bool | None = None,
+        policy: dict[str, Any] | None = None,
     ) -> None:
         if round_idx is not None:
             self.round_label.setText(f"第 {round_idx} 轮")
         self.status_chip.setText(status)
         if preview is not None:
             self._preview = preview
+        if policy is not None:
+            self._set_policy(policy)
         status_key = status.strip().lower()
         if error or status_key in {"rejected", "failed"}:
             chip_style = (
@@ -907,6 +1000,7 @@ class ToolLogEntry(QFrame):
             args=args,
             result=result,
             preview=self._preview,
+            policy=self._policy,
         )
         self._refresh_summary_label()
 
@@ -917,6 +1011,7 @@ class ToolLogEntry(QFrame):
             round_idx=round_idx,
             status=status,
             preview=self._preview,
+            policy=self._policy,
         )
         self.body.set_content(
             render(body_md),
@@ -1029,6 +1124,7 @@ class ToolTraceCard(QFrame):
         error: bool = False,
         preview: str | None = None,
         approval_pending: bool | None = None,
+        policy: dict[str, Any] | None = None,
     ) -> ToolLogEntry:
         entry = self._entries.get(call_id)
         if entry is None:
@@ -1047,6 +1143,7 @@ class ToolTraceCard(QFrame):
             error=error,
             preview=preview,
             approval_pending=approval_pending,
+            policy=policy,
         )
         self._sync_empty()
         return entry
@@ -1060,15 +1157,13 @@ class ChatWindow(QMainWindow):
         self.setMinimumSize(960, 640)
 
         self.current_session: str | None = None
-        self.worker: ChatWorker | AgentWorker | None = None
-        self._detached_workers: list[ChatWorker | AgentWorker] = []
+        self.worker: AgentWorker | None = None
+        self._detached_workers: list[AgentWorker] = []
         self._streaming_buf = ""
         self._streaming_time = ""
-        self._activity = "就绪"
+        self._activity = "Ready"
         self._send_locked = False
         self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
         self._agent_trace_card: ToolTraceCard | None = None
         self._agent_trace_row: QWidget | None = None
         self._tool_trace_events: list[dict[str, Any]] = []
@@ -1481,6 +1576,8 @@ QListWidget::item:selected {{
         self.chat_subtitle_label.setFont(QFont("Microsoft YaHei", 8))
         self.chat_subtitle_label.setStyleSheet(f"color: {C_TEXT_SUB};")
 
+        self.chat_subtitle_label.setText(f"{MODEL} | Workspace | 0 messages | Ready")
+
         title_stack.addWidget(self.chat_title_label)
         title_stack.addWidget(self.chat_subtitle_label)
         h.addLayout(title_stack)
@@ -1495,6 +1592,12 @@ QListWidget::item:selected {{
 
         self.chat_model_chip = _chip_label(MODEL, "#F5F3FF", "rgba(124, 58, 237, 0.16)", "rgba(124, 58, 237, 0.34)")
         self.chat_mode_chip = _chip_label("Chat", "#DBEAFE", "rgba(37, 99, 235, 0.16)", "rgba(37, 99, 235, 0.34)")
+        self.chat_mode_chip.setText("Workspace")
+        self.chat_mode_chip.setStyleSheet(
+            "background: rgba(124, 58, 237, 0.16); color: #E9D5FF; "
+            "border: 1px solid rgba(124, 58, 237, 0.34); border-radius: 999px; "
+            "padding: 4px 10px; font-size: 11px; font-weight: 700;"
+        )
         h.addWidget(self.chat_model_chip)
         h.addWidget(self.chat_mode_chip)
 
@@ -1532,6 +1635,7 @@ QListWidget::item:selected {{
 
         hint = QLabel("Enter 发送 · Shift+Enter 换行")
         hint.setStyleSheet(f"color: {C_TEXT_PLACEHOLDER}; font-size: 11px;")
+        hint.setText("用自然语言描述任务，Agent 会自己决定是否读取文件、修改代码和执行命令")
         actions.addWidget(hint)
         actions.addStretch(1)
 
@@ -1541,6 +1645,8 @@ QListWidget::item:selected {{
         self.agent_btn.setToolTip("切换为代码 agent：可读文件、改文件、运行命令")
         self.agent_btn.toggled.connect(self._sync_mode_button_style)
         self.agent_btn.toggled.connect(self._refresh_chat_header)
+        self.agent_btn.setChecked(True)
+        self.agent_btn.setVisible(False)
         actions.addWidget(self.agent_btn)
         self._sync_mode_button_style()
 
@@ -1697,68 +1803,6 @@ QListWidget::item:selected {{
             return
         self._show_rollback_detail(int(rollback_id))
 
-    def _show_rollback_detail(self, rollback_id: int) -> None:
-        workspace = self._workspace_tools_for_session()
-        if workspace is None:
-            self._set_rollback_detail_empty("No active session")
-            return
-
-        preview = workspace.preview_rollback_change(int(rollback_id))
-        self._selected_rollback_id = int(rollback_id)
-        status = str(preview.get("status") or "unknown").strip() or "unknown"
-        self.rollback_detail_title.setText(
-            f"#{rollback_id} · {preview.get('source_tool') or 'rollback'}"
-        )
-        self.rollback_detail_meta.setText(
-            f"Status: {status} | Paths: {int(preview.get('path_count') or 0)} | Created: {preview.get('created_at') or '-'}"
-        )
-
-        diff_entries = preview.get("diff_entries") if isinstance(preview.get("diff_entries"), list) else []
-        file_lines = []
-        for entry in diff_entries:
-            if not isinstance(entry, dict):
-                continue
-            file_lines.append(
-                f"- {entry.get('path') or ''} · {_rollback_change_type_label(str(entry.get('action') or ''))}"
-            )
-        self.rollback_detail_files.setText(
-            "\n".join(file_lines) if file_lines else "No file details available"
-        )
-
-        md = [
-            f"### Rollback #{rollback_id}",
-            "",
-            f"**Status**: {status}",
-            "",
-            f"**Summary**: {preview.get('summary') or '-'}",
-            "",
-            _preview_markdown_block(str(preview.get("preview") or "")),
-        ]
-        self.rollback_detail_body.setHtml(render("\n".join(md)))
-
-        available = bool(preview.get("available", False))
-        self.rollback_open_trace_btn.setEnabled(preview.get("rollback_id") is not None)
-        self.rollback_restore_btn.setEnabled(available)
-
-    def _open_selected_rollback_preview_in_chat(self) -> None:
-        rollback_id = self._selected_rollback_id
-        if rollback_id is None:
-            return
-        prompt = (
-            f"请直接调用 preview_rollback_change 工具，参数 rollback_id={int(rollback_id)}，"
-            "只展示差异预览，不要执行回滚。"
-        )
-        self._submit_text(prompt, force_agent=True, clear_input=False)
-
-    def _restore_selected_rollback(self) -> None:
-        rollback_id = self._selected_rollback_id
-        if rollback_id is None:
-            return
-        prompt = (
-            f"请直接调用 rollback_change 工具，参数 rollback_id={int(rollback_id)}，"
-            "恢复到这个版本，然后给我结果。"
-        )
-        self._submit_text(prompt, force_agent=True, clear_input=False)
 
     def _show_rollback_detail(self, rollback_id: int) -> None:
         workspace = self._workspace_tools_for_session()
@@ -1811,7 +1855,7 @@ QListWidget::item:selected {{
             f"Call the preview_rollback_change tool with rollback_id={int(rollback_id)}. "
             "Show the diff preview only and do not perform any rollback."
         )
-        self._submit_text(prompt, force_agent=True, clear_input=False)
+        self._submit_text(prompt, clear_input=False)
 
     def _restore_selected_rollback(self) -> None:
         rollback_id = self._selected_rollback_id
@@ -1821,7 +1865,7 @@ QListWidget::item:selected {{
             f"Call the rollback_change tool with rollback_id={int(rollback_id)}. "
             "Restore that version and then tell me the result."
         )
-        self._submit_text(prompt, force_agent=True, clear_input=False)
+        self._submit_text(prompt, clear_input=False)
 
     def _build_empty_state(self) -> QFrame:
         card = QFrame()
@@ -1943,7 +1987,7 @@ QListWidget::item:selected {{
         self.current_session = session_id
         self._streaming_buf = ""
         self._streaming_time = ""
-        self._activity = "就绪"
+        self._activity = "Ready"
         self._send_locked = False
         self._reset_tool_trace()
         self._load_sessions()
@@ -1988,7 +2032,7 @@ QListWidget::item:selected {{
             self.current_session = None
             self._streaming_buf = ""
             self._streaming_time = ""
-            self._activity = "就绪"
+            self._activity = "Ready"
             self._reset_tool_trace()
             self._load_sessions()
             self._render_messages([])
@@ -2054,8 +2098,6 @@ QListWidget::item:selected {{
     def _ensure_agent_trace_card(self) -> ToolTraceCard | None:
         if self._agent_trace_card is not None:
             return self._agent_trace_card
-        if not self.agent_btn.isChecked():
-            return None
 
         width = self._bubble_width("assistant", "")
         trace = ToolTraceCard(width)
@@ -2103,6 +2145,7 @@ QListWidget::item:selected {{
             round_idx = int(round_idx) if round_idx is not None else None
         except (TypeError, ValueError):
             round_idx = None
+        policy = event.get("policy") if isinstance(event.get("policy"), dict) else None
 
         if event_type == "tool_preview":
             args = event.get("args") if isinstance(event.get("args"), dict) else {}
@@ -2115,6 +2158,7 @@ QListWidget::item:selected {{
                 preview=preview,
                 round_idx=round_idx,
                 approval_pending=False,
+                policy=policy,
             )
         elif event_type == "tool_start":
             args = event.get("args") if isinstance(event.get("args"), dict) else {}
@@ -2125,6 +2169,7 @@ QListWidget::item:selected {{
                 args=args,
                 round_idx=round_idx,
                 approval_pending=False,
+                policy=policy,
             )
         elif event_type == "tool_approval_required":
             args = event.get("args") if isinstance(event.get("args"), dict) else {}
@@ -2137,6 +2182,7 @@ QListWidget::item:selected {{
                 preview=preview,
                 round_idx=round_idx,
                 approval_pending=True,
+                policy=policy,
             )
             trace.set_state("等待确认", kind="active")
         elif event_type == "tool_approval_decision":
@@ -2152,6 +2198,7 @@ QListWidget::item:selected {{
                 round_idx=round_idx,
                 error=not approved,
                 approval_pending=False,
+                policy=policy,
             )
             trace.set_state("执行中" if approved else "失败", kind="active" if approved else "error")
         elif event_type == "tool_result":
@@ -2167,6 +2214,7 @@ QListWidget::item:selected {{
                 round_idx=round_idx,
                 error=error,
                 approval_pending=False,
+                policy=policy,
             )
             if error:
                 trace.set_state("失败", kind="error")
@@ -2210,7 +2258,7 @@ QListWidget::item:selected {{
                     )
                     self.chat_layout.addWidget(row)
 
-                if self.agent_btn.isChecked() and (
+                if (
                     self._tool_trace_events
                     or streaming_html is not None
                     or thinking
@@ -2290,7 +2338,7 @@ QListWidget::item:selected {{
         self._update_scroll_to_bottom_button()
 
     def _resolve_inline_approval(self, call_id: str, approved: bool) -> None:
-        worker = self.worker if isinstance(self.worker, AgentWorker) else None
+        worker = self.worker
         if worker is None or not call_id:
             return
         worker.resolve_approval(call_id, approved)
@@ -2303,34 +2351,8 @@ QListWidget::item:selected {{
         if self._is_busy():
             QMessageBox.information(self, "kagent", "当前任务还在执行，先等它完成再点这个操作。")
             return
-        self._submit_text(prompt, force_agent=True, clear_input=False)
+        self._submit_text(prompt, clear_input=False)
 
-    def _on_tool_event(self, event: dict[str, Any]):
-        trace = self._ensure_agent_trace_card()
-        if trace is None:
-            return
-
-        self._apply_tool_event(trace, event)
-        self._tool_trace_events.append(dict(event))
-        if str(event.get("type") or "").strip() == "tool_result":
-            name = str(event.get("name") or "").strip()
-            if name in {
-                "write_file",
-                "apply_patch",
-                "rename_path",
-                "copy_path",
-                "delete_path",
-                "make_directory",
-                "rollback_last_change",
-                "rollback_change",
-                "list_rollback_history",
-                "preview_rollback_change",
-            }:
-                self._refresh_rollback_history_panel()
-
-        self.chat_scroll.verticalScrollBar().setValue(
-            self.chat_scroll.verticalScrollBar().maximum()
-        )
 
     # ==================== State ====================
 
@@ -2392,85 +2414,36 @@ QListWidget::item:selected {{
     def _set_busy_controls(self, busy: bool):
         self.new_btn.setEnabled(not busy)
         self.session_list.setEnabled(not busy)
-        self.agent_btn.setEnabled(not busy)
         self.send_btn.setEnabled(not busy)
         self.stop_btn.setEnabled(busy and not self._stop_requested)
         self._sync_mode_button_style()
         self._sync_send_button_style()
         self._sync_stop_button_style()
 
-    def _refresh_chat_header(self):
+    def _legacy_refresh_chat_header(self):
         title = self._current_session_title()
-        mode = "Agent" if self.agent_btn.isChecked() else "Chat"
         count = len(db.get_messages(self.current_session)) if self.current_session else 0
 
         self.chat_title_label.setText(title)
-        self.chat_subtitle_label.setText(f"{MODEL} · {mode} · {count} 条消息 · {self._activity}")
+        self.chat_subtitle_label.setText(f"{MODEL} ? Workspace ? {count} ??? ? {self._activity}")
+        self.chat_mode_chip.setText("Workspace")
+        self.chat_mode_chip.setStyleSheet(
+            "background: rgba(124, 58, 237, 0.16); color: #E9D5FF; "
+            "border: 1px solid rgba(124, 58, 237, 0.34); border-radius: 999px; "
+            "padding: 4px 10px; font-size: 11px; font-weight: 700;"
+        )
 
-        if self.agent_btn.isChecked():
-            self.chat_mode_chip.setText("Agent")
-            self.chat_mode_chip.setStyleSheet(
-                "background: rgba(124, 58, 237, 0.16); color: #E9D5FF; "
-                "border: 1px solid rgba(124, 58, 237, 0.34); border-radius: 999px; "
-                "padding: 4px 10px; font-size: 11px; font-weight: 700;"
-            )
-        else:
-            self.chat_mode_chip.setText("Chat")
-            self.chat_mode_chip.setStyleSheet(
-                "background: rgba(37, 99, 235, 0.16); color: #DBEAFE; "
-                "border: 1px solid rgba(37, 99, 235, 0.34); border-radius: 999px; "
-                "padding: 4px 10px; font-size: 11px; font-weight: 700;"
-            )
-
-    def _update_status(self):
+    def _legacy_update_status(self):
         count = len(db.get_messages(self.current_session)) if self.current_session else 0
+        self.status_count.setText(f"共 {count} 条消息")
         self.status_count.setText(f"共 {count} 条消息")
 
     # ==================== Send Flow ====================
 
-    def _stopped_message_for_worker(self, worker: ChatWorker | AgentWorker | None) -> str:
-        if isinstance(worker, AgentWorker):
-            return "已停止执行。"
-        return "已停止生成。"
+    def _legacy_stopped_message_for_worker(self, worker: AgentWorker | None) -> str:
+        return "??????"
 
-    def _schedule_stream_flush(self) -> None:
-        if self._stream_flush_pending:
-            return
-        self._stream_flush_pending = True
-        QTimer.singleShot(STREAM_RENDER_INTERVAL_MS, self._flush_streaming_update)
-
-    def _flush_streaming_update(self) -> None:
-        self._stream_flush_pending = False
-        if isinstance(self.worker, AgentWorker):
-            return
-        if self._streaming_buf == self._stream_last_painted:
-            return
-
-        card = getattr(self, "_streaming_card", None)
-        row = getattr(self, "_streaming_row", None)
-        if card is None:
-            msgs = db.get_messages(self.current_session) if self.current_session else []
-            self._render_messages(msgs, streaming_html=self._streaming_buf)
-            self._stream_last_painted = self._streaming_buf
-            return
-
-        card.update_body(self._streaming_buf, streaming=True)
-        self._stream_last_painted = self._streaming_buf
-        if row is not None:
-            scrollbar = self.chat_scroll.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-
-    def _on_stop_clicked(self):
-        if not self._is_busy() or self.worker is None or self._stop_requested:
-            return
-
-        self._stop_requested = True
-        self._activity = "停止中"
-        self.worker.stop()
-        self._set_busy_controls(True)
-        self._refresh_chat_header()
-
-    def _finalize_stopped_worker(self, worker: ChatWorker | AgentWorker | None):
+    def _legacy_finalize_stopped_worker(self, worker: AgentWorker | None):
         stopped_text = self._stopped_message_for_worker(worker)
         card = getattr(self, "_streaming_card", None)
         row = getattr(self, "_streaming_row", None)
@@ -2500,8 +2473,6 @@ QListWidget::item:selected {{
         self._send_locked = False
         self.worker = None
         self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
         self._set_busy_controls(False)
         self._streaming_buf = ""
         self._streaming_time = ""
@@ -2512,127 +2483,20 @@ QListWidget::item:selected {{
         self._refresh_rollback_history_panel()
         self.input.setFocus()
 
-    def _submit_text(self, text: str, force_agent: bool = False, clear_input: bool = False) -> None:
-        if self._is_busy():
-            return
-        if not self.current_session:
-            self.new_session()
-        if not self.current_session:
-            return
 
-        normalized = str(text or "").strip()
-        if not normalized:
-            return
-
-        if force_agent:
-            self.agent_btn.setChecked(True)
-        elif not self.agent_btn.isChecked() and _looks_like_agent_task(normalized):
-            self.agent_btn.setChecked(True)
-        use_agent = self.agent_btn.isChecked()
-
-        self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
-        if clear_input:
-            self.input.clear()
-        self._streaming_buf = ""
-        self._streaming_time = datetime.now().strftime("%H:%M")
-        """
-        self._activity = "鎵ц涓? if use_agent else "鎬濊€冧腑"
-        self._reset_tool_trace()
-        """
-        self._activity = "Working" if use_agent else "Thinking"
-        self._reset_tool_trace()
-        self._send_locked = True
-        self._set_busy_controls(True)
-
-        db.save_message(self.current_session, "user", normalized)
-        history = db.get_messages(self.current_session)
-        self._render_messages(history, thinking=True)
-
-        if use_agent:
-            self.worker = AgentWorker(self.current_session, normalized, history)
-        else:
-            self.worker = ChatWorker(self.current_session, normalized, history)
-
-        self.worker.chunk.connect(self._on_chunk)
-        self.worker.done.connect(self._on_done)
-        self.worker.error.connect(self._on_error)
-        self.worker.title_ready.connect(self._on_title)
-        if isinstance(self.worker, AgentWorker):
-            self.worker.tool_event.connect(self._on_tool_event)
-        worker = self.worker
-        QTimer.singleShot(
-            THINKING_PLACEHOLDER_DELAY_MS,
-            lambda current_worker=worker: self._start_worker(current_worker),
-        )
-
-    def on_send(self):
-        if self._is_busy():
-            return
-        if not self.current_session:
-            self.new_session()
-        if not self.current_session:
-            return
-
-        text = self.input.toPlainText().strip()
-        self._submit_text(text, clear_input=True)
-        return
-        if not text:
-            return
-
-        if not self.agent_btn.isChecked() and _looks_like_agent_task(text):
-            self.agent_btn.setChecked(True)
-        use_agent = self.agent_btn.isChecked()
-
-        self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
-        self.input.clear()
-        self._streaming_buf = ""
-        self._streaming_time = datetime.now().strftime("%H:%M")
-        self._activity = "执行中" if use_agent else "思考中"
-        self._reset_tool_trace()
-        self._send_locked = True
-        self._set_busy_controls(True)
-
-        db.save_message(self.current_session, "user", text)
-        history = db.get_messages(self.current_session)
-        self._render_messages(history, thinking=True)
-
-        if use_agent:
-            self.worker = AgentWorker(self.current_session, text, history)
-        else:
-            self.worker = ChatWorker(self.current_session, text, history)
-
-        self.worker.chunk.connect(self._on_chunk)
-        self.worker.done.connect(self._on_done)
-        self.worker.error.connect(self._on_error)
-        self.worker.title_ready.connect(self._on_title)
-        if isinstance(self.worker, AgentWorker):
-            self.worker.tool_event.connect(self._on_tool_event)
-        worker = self.worker
-        QTimer.singleShot(
-            THINKING_PLACEHOLDER_DELAY_MS,
-            lambda current_worker=worker: self._start_worker(current_worker),
-        )
-
-    def _release_detached_worker(self, worker: ChatWorker | AgentWorker | None) -> None:
+    def _release_detached_worker(self, worker: AgentWorker | None) -> None:
         if worker is None:
             return
         if worker in self._detached_workers:
             self._detached_workers.remove(worker)
             worker.deleteLater()
 
-    def _track_detached_worker(self, worker: ChatWorker | AgentWorker | None) -> None:
+    def _track_detached_worker(self, worker: AgentWorker | None) -> None:
         if worker is None or worker in self._detached_workers:
             return
         self._detached_workers.append(worker)
 
-    def _attach_worker_signals(self, worker: ChatWorker | AgentWorker) -> None:
-        worker.chunk.connect(
-            lambda piece, current_worker=worker: self._on_chunk(current_worker, piece)
-        )
+    def _attach_worker_signals(self, worker: AgentWorker) -> None:
         worker.done.connect(
             lambda full, current_worker=worker: self._on_done(current_worker, full)
         )
@@ -2640,10 +2504,9 @@ QListWidget::item:selected {{
             lambda msg, current_worker=worker: self._on_error(current_worker, msg)
         )
         worker.title_ready.connect(self._on_title)
-        if isinstance(worker, AgentWorker):
-            worker.tool_event.connect(
-                lambda event, current_worker=worker: self._on_tool_event(current_worker, event)
-            )
+        worker.tool_event.connect(
+            lambda event, current_worker=worker: self._on_tool_event(current_worker, event)
+        )
         worker.finished.connect(
             lambda current_worker=worker: self._release_detached_worker(current_worker)
         )
@@ -2663,7 +2526,7 @@ QListWidget::item:selected {{
             lambda current_worker=worker: self._force_finalize_stopping_worker(current_worker),
         )
 
-    def _force_finalize_stopping_worker(self, worker: ChatWorker | AgentWorker | None) -> None:
+    def _force_finalize_stopping_worker(self, worker: AgentWorker | None) -> None:
         if worker is None:
             return
         if self.worker is not worker or not self._stop_requested:
@@ -2671,7 +2534,7 @@ QListWidget::item:selected {{
         self._track_detached_worker(worker)
         self._finalize_stopped_worker(worker)
 
-    def _on_tool_event(self, worker: ChatWorker | AgentWorker, event: dict[str, Any]):
+    def _on_tool_event(self, worker: AgentWorker, event: dict[str, Any]):
         if worker is not self.worker:
             return
 
@@ -2701,7 +2564,7 @@ QListWidget::item:selected {{
             self.chat_scroll.verticalScrollBar().maximum()
         )
 
-    def _submit_text(self, text: str, force_agent: bool = False, clear_input: bool = False) -> None:
+    def _submit_text(self, text: str, clear_input: bool = False) -> None:
         if self._is_busy():
             return
         if not self.current_session:
@@ -2713,20 +2576,13 @@ QListWidget::item:selected {{
         if not normalized:
             return
 
-        if force_agent:
-            self.agent_btn.setChecked(True)
-        elif not self.agent_btn.isChecked() and _looks_like_agent_task(normalized):
-            self.agent_btn.setChecked(True)
-        use_agent = self.agent_btn.isChecked()
-
+        self.agent_btn.setChecked(True)
         self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
         if clear_input:
             self.input.clear()
         self._streaming_buf = ""
         self._streaming_time = datetime.now().strftime("%H:%M")
-        self._activity = "Working" if use_agent else "Thinking"
+        self._activity = "Working"
         self._reset_tool_trace()
         self._send_locked = True
         self._set_busy_controls(True)
@@ -2735,10 +2591,7 @@ QListWidget::item:selected {{
         history = db.get_messages(self.current_session)
         self._render_messages(history, thinking=True)
 
-        if use_agent:
-            worker: ChatWorker | AgentWorker = AgentWorker(self.current_session, normalized, history)
-        else:
-            worker = ChatWorker(self.current_session, normalized, history)
+        worker = AgentWorker(self.current_session, normalized, history)
         self.worker = worker
         self._attach_worker_signals(worker)
 
@@ -2751,7 +2604,7 @@ QListWidget::item:selected {{
         text = self.input.toPlainText().strip()
         self._submit_text(text, clear_input=True)
 
-    def _start_worker(self, worker: ChatWorker | AgentWorker | None):
+    def _start_worker(self, worker: AgentWorker | None):
         if worker is None:
             return
         if self.worker is not worker:
@@ -2761,13 +2614,8 @@ QListWidget::item:selected {{
             return
         worker.start()
 
-    def _on_chunk(self, worker: ChatWorker | AgentWorker, piece: str):
-        if worker is not self.worker or isinstance(worker, AgentWorker):
-            return
-        self._streaming_buf += piece
-        self._schedule_stream_flush()
 
-    def _on_done(self, worker: ChatWorker | AgentWorker, full: str):
+    def _on_done(self, worker: AgentWorker, full: str):
         if worker is not self.worker:
             return
 
@@ -2788,14 +2636,14 @@ QListWidget::item:selected {{
         else:
             msgs = db.get_messages(self.current_session) if self.current_session else []
             self._render_messages(msgs)
-        trace = self._agent_trace_card if self.agent_btn.isChecked() else None
+
+        trace = self._agent_trace_card
         if trace is not None:
             trace.set_state("Stopped" if was_stopped else "Done", kind="active" if was_stopped else "done")
+
         self._send_locked = False
         self.worker = None
         self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
         self._set_busy_controls(False)
         self._sync_send_button_style()
         self._streaming_buf = ""
@@ -2807,7 +2655,7 @@ QListWidget::item:selected {{
         self._refresh_rollback_history_panel()
         self.input.setFocus()
 
-    def _on_error(self, worker: ChatWorker | AgentWorker, msg: str):
+    def _legacy_on_error(self, worker: AgentWorker, msg: str):
         if worker is not self.worker:
             return
         if self._stop_requested:
@@ -2816,18 +2664,103 @@ QListWidget::item:selected {{
 
         msgs = db.get_messages(self.current_session) if self.current_session else []
         self._activity = "Ready"
-        streaming_html = None
-        if not isinstance(worker, AgentWorker) and self._streaming_buf:
-            streaming_html = self._streaming_buf
-        self._render_messages(msgs, streaming_html=streaming_html, error_text=msg)
-        trace = self._agent_trace_card if self.agent_btn.isChecked() else None
+        self._render_messages(msgs, error_text=msg)
+
+        trace = self._agent_trace_card
         if trace is not None:
             trace.set_state("Failed", kind="error")
+
         self._send_locked = False
         self.worker = None
         self._stop_requested = False
-        self._stream_flush_pending = False
-        self._stream_last_painted = ""
+        self._set_busy_controls(False)
+        self._sync_send_button_style()
+        self._streaming_buf = ""
+        self._streaming_time = ""
+        self._refresh_rollback_history_panel()
+        self.input.setFocus()
+        QMessageBox.warning(self, "kagent", f"调用失败：\n\n{msg}")
+
+    def _refresh_chat_header(self):
+        title = self._current_session_title()
+        count = len(db.get_messages(self.current_session)) if self.current_session else 0
+
+        self.chat_title_label.setText(title)
+        self.chat_subtitle_label.setText(
+            f"{MODEL} | Workspace | {count} messages | {self._activity}"
+        )
+        self.chat_mode_chip.setText("Workspace")
+        self.chat_mode_chip.setStyleSheet(
+            "background: rgba(124, 58, 237, 0.16); color: #E9D5FF; "
+            "border: 1px solid rgba(124, 58, 237, 0.34); border-radius: 999px; "
+            "padding: 4px 10px; font-size: 11px; font-weight: 700;"
+        )
+
+    def _update_status(self):
+        count = len(db.get_messages(self.current_session)) if self.current_session else 0
+        self.status_count.setText(f"{count} messages")
+
+    def _stopped_message_for_worker(self, worker: AgentWorker | None) -> str:
+        return "Stopped"
+
+    def _finalize_stopped_worker(self, worker: AgentWorker | None):
+        stopped_text = self._stopped_message_for_worker(worker)
+        card = getattr(self, "_streaming_card", None)
+        row = getattr(self, "_streaming_row", None)
+        if card is not None and not self._streaming_buf.strip():
+            card.update_body(stopped_text, streaming=False)
+            if row is not None:
+                self.chat_scroll.verticalScrollBar().setValue(
+                    self.chat_scroll.verticalScrollBar().maximum()
+                )
+        elif card is None:
+            msgs = db.get_messages(self.current_session) if self.current_session else []
+            self._render_messages(msgs, thinking=True)
+            card = getattr(self, "_streaming_card", None)
+            row = getattr(self, "_streaming_row", None)
+            if card is not None:
+                card.update_body(stopped_text, streaming=False)
+                if row is not None:
+                    self.chat_scroll.verticalScrollBar().setValue(
+                        self.chat_scroll.verticalScrollBar().maximum()
+                    )
+
+        trace = self._agent_trace_card
+        if trace is not None:
+            trace.set_state("Stopped", kind="active")
+
+        self._activity = "Stopped"
+        self._send_locked = False
+        self.worker = None
+        self._stop_requested = False
+        self._set_busy_controls(False)
+        self._streaming_buf = ""
+        self._streaming_time = ""
+        self._streaming_card = None
+        self._streaming_row = None
+        self._refresh_chat_header()
+        self._update_status()
+        self._refresh_rollback_history_panel()
+        self.input.setFocus()
+
+    def _on_error(self, worker: AgentWorker, msg: str):
+        if worker is not self.worker:
+            return
+        if self._stop_requested:
+            self._finalize_stopped_worker(worker)
+            return
+
+        msgs = db.get_messages(self.current_session) if self.current_session else []
+        self._activity = "Ready"
+        self._render_messages(msgs, error_text=msg)
+
+        trace = self._agent_trace_card
+        if trace is not None:
+            trace.set_state("Failed", kind="error")
+
+        self._send_locked = False
+        self.worker = None
+        self._stop_requested = False
         self._set_busy_controls(False)
         self._sync_send_button_style()
         self._streaming_buf = ""
@@ -2843,7 +2776,7 @@ QListWidget::item:selected {{
     # ==================== Qt ====================
 
     def closeEvent(self, e):
-        workers: list[ChatWorker | AgentWorker] = []
+        workers: list[AgentWorker] = []
         if self.worker is not None:
             workers.append(self.worker)
         for worker in list(self._detached_workers):

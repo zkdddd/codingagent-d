@@ -79,6 +79,7 @@ class AgentWorker(QThread):
         args: dict,
         preview: str | None,
         round_idx: int | None,
+        policy: dict,
     ) -> bool:
         gate = threading.Event()
         with self._approval_lock:
@@ -91,6 +92,7 @@ class AgentWorker(QThread):
                 "name": name,
                 "args": args,
                 "preview": preview,
+                "policy": policy,
                 "round": round_idx,
             }
         )
@@ -113,6 +115,7 @@ class AgentWorker(QThread):
                 "name": name,
                 "args": args,
                 "preview": preview,
+                "policy": policy,
                 "round": round_idx,
                 "approved": approved,
             }
