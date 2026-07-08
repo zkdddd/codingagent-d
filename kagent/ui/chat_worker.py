@@ -1,3 +1,5 @@
+import threading
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .. import db, llm
@@ -17,9 +19,40 @@ class ChatWorker(QThread):
         self.message = message
         self.history = history
         self._stop = False
+        self._stream = None
+        self._stream_lock = threading.Lock()
 
     def stop(self):
         self._stop = True
+        self._close_stream()
+
+    def _close_stream(self) -> None:
+        with self._stream_lock:
+            stream = self._stream
+            self._stream = None
+        if stream is None:
+            return
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+    def _schedule_title_generation(self) -> None:
+        if len(self.history) != 1:
+            return
+
+        def _run() -> None:
+            title = llm.generate_title(self.message)
+            if not title:
+                return
+            db.rename_session(self.session_id, title)
+            self.title_ready.emit(title)
+
+        threading.Thread(
+            target=_run,
+            name=f"kagent-title-{self.session_id}",
+            daemon=True,
+        ).start()
 
     def run(self):
         try:
@@ -27,22 +60,37 @@ class ChatWorker(QThread):
                 self.done.emit("")
                 return
 
-            # 用户消息已由主线程保存到 DB，history 也已包含
-            # 首条消息生成会话标题
-            if len(self.history) == 1:
-                title = llm.generate_title(self.message)
-                self.title_ready.emit(title)
-                db.rename_session(self.session_id, title)
+            # 标题生成放到独立线程，避免它阻塞首包显示和停止操作。
+            self._schedule_title_generation()
 
             full = ""
-            for piece in llm.stream_chat(self.history):
+            with self._stream_lock:
                 if self._stop:
-                    break
-                full += piece
-                self.chunk.emit(piece)
+                    self.done.emit("")
+                    return
+                self._stream = llm.open_chat_stream(self.history)
+                stream = self._stream
 
-            if full:
+            try:
+                for chunk in stream:
+                    if self._stop:
+                        break
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    content = delta.content if delta else None
+                    if not content:
+                        continue
+                    full += content
+                    self.chunk.emit(content)
+            finally:
+                self._close_stream()
+
+            if full and not self._stop:
                 db.save_message(self.session_id, "assistant", full)
-            self.done.emit(full)
+            self.done.emit("" if self._stop else full)
         except Exception as e:
+            if self._stop:
+                self.done.emit("")
+                return
             self.error.emit(str(e))

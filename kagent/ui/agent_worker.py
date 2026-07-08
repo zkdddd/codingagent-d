@@ -26,6 +26,29 @@ class AgentWorker(QThread):
 
     def stop(self):
         self._stop = True
+        with self._approval_lock:
+            waiters = list(self._approval_waiters.values())
+        for waiter in waiters:
+            event = waiter.get("event")
+            if isinstance(event, threading.Event):
+                event.set()
+
+    def _schedule_title_generation(self) -> None:
+        if len(self.history) != 1:
+            return
+
+        def _run() -> None:
+            title = llm.generate_title(self.message)
+            if not title:
+                return
+            db.rename_session(self.session_id, title)
+            self.title_ready.emit(title)
+
+        threading.Thread(
+            target=_run,
+            name=f"kagent-agent-title-{self.session_id}",
+            daemon=True,
+        ).start()
 
     def resolve_approval(self, call_id: str, approved: bool) -> None:
         with self._approval_lock:
@@ -102,10 +125,8 @@ class AgentWorker(QThread):
                 self.done.emit("")
                 return
 
-            if len(self.history) == 1:
-                title = llm.generate_title(self.message)
-                self.title_ready.emit(title)
-                db.rename_session(self.session_id, title)
+            # 标题生成不阻塞 agent 首轮工具调用和停止操作。
+            self._schedule_title_generation()
 
             agent = CodeAgent(
                 confirm_tool=self._confirm_tool,
@@ -117,10 +138,13 @@ class AgentWorker(QThread):
                 on_event=self.tool_event.emit,
                 should_stop=lambda: self._stop,
             )
-            answer = self._final_answer_from_report(report)
+            answer = "" if self._stop else self._final_answer_from_report(report)
 
             if answer and not self._stop:
                 db.save_message(self.session_id, "assistant", answer)
             self.done.emit(answer)
         except Exception as e:
+            if self._stop:
+                self.done.emit("")
+                return
             self.error.emit(str(e))

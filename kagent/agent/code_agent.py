@@ -4,7 +4,7 @@ import json
 from typing import Any, Callable
 
 from ..config import AGENT_SYSTEM_PROMPT, MODEL
-from ..llm import client
+from ..llm import AGENT_REQUEST_TIMEOUT_SECONDS, client
 from .workspace import WorkspaceError, WorkspaceTools
 
 EmitFn = Callable[[str], None]
@@ -889,6 +889,7 @@ class CodeAgent:
                 tools=_tool_schema(),
                 tool_choice="auto",
                 temperature=0.2,
+                timeout=AGENT_REQUEST_TIMEOUT_SECONDS,
             )
 
             assistant = response.choices[0].message

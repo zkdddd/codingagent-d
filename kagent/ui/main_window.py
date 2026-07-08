@@ -35,6 +35,7 @@ from .markdown_view import highlight_css, render
 
 THINKING_PLACEHOLDER_DELAY_MS = 220
 STREAM_RENDER_INTERVAL_MS = 40
+WORKER_STOP_GRACE_MS = 1500
 
 
 C_BG_ROOT = "#070B14"
@@ -1060,6 +1061,7 @@ class ChatWindow(QMainWindow):
 
         self.current_session: str | None = None
         self.worker: ChatWorker | AgentWorker | None = None
+        self._detached_workers: list[ChatWorker | AgentWorker] = []
         self._streaming_buf = ""
         self._streaming_time = ""
         self._activity = "就绪"
@@ -2607,6 +2609,90 @@ QListWidget::item:selected {{
             lambda current_worker=worker: self._start_worker(current_worker),
         )
 
+    def _release_detached_worker(self, worker: ChatWorker | AgentWorker | None) -> None:
+        if worker is None:
+            return
+        if worker in self._detached_workers:
+            self._detached_workers.remove(worker)
+            worker.deleteLater()
+
+    def _track_detached_worker(self, worker: ChatWorker | AgentWorker | None) -> None:
+        if worker is None or worker in self._detached_workers:
+            return
+        self._detached_workers.append(worker)
+
+    def _attach_worker_signals(self, worker: ChatWorker | AgentWorker) -> None:
+        worker.chunk.connect(
+            lambda piece, current_worker=worker: self._on_chunk(current_worker, piece)
+        )
+        worker.done.connect(
+            lambda full, current_worker=worker: self._on_done(current_worker, full)
+        )
+        worker.error.connect(
+            lambda msg, current_worker=worker: self._on_error(current_worker, msg)
+        )
+        worker.title_ready.connect(self._on_title)
+        if isinstance(worker, AgentWorker):
+            worker.tool_event.connect(
+                lambda event, current_worker=worker: self._on_tool_event(current_worker, event)
+            )
+        worker.finished.connect(
+            lambda current_worker=worker: self._release_detached_worker(current_worker)
+        )
+
+    def _on_stop_clicked(self):
+        if not self._is_busy() or self.worker is None or self._stop_requested:
+            return
+
+        worker = self.worker
+        self._stop_requested = True
+        self._activity = "Stopping"
+        worker.stop()
+        self._set_busy_controls(True)
+        self._refresh_chat_header()
+        QTimer.singleShot(
+            WORKER_STOP_GRACE_MS,
+            lambda current_worker=worker: self._force_finalize_stopping_worker(current_worker),
+        )
+
+    def _force_finalize_stopping_worker(self, worker: ChatWorker | AgentWorker | None) -> None:
+        if worker is None:
+            return
+        if self.worker is not worker or not self._stop_requested:
+            return
+        self._track_detached_worker(worker)
+        self._finalize_stopped_worker(worker)
+
+    def _on_tool_event(self, worker: ChatWorker | AgentWorker, event: dict[str, Any]):
+        if worker is not self.worker:
+            return
+
+        trace = self._ensure_agent_trace_card()
+        if trace is None:
+            return
+
+        self._apply_tool_event(trace, event)
+        self._tool_trace_events.append(dict(event))
+        if str(event.get("type") or "").strip() == "tool_result":
+            name = str(event.get("name") or "").strip()
+            if name in {
+                "write_file",
+                "apply_patch",
+                "rename_path",
+                "copy_path",
+                "delete_path",
+                "make_directory",
+                "rollback_last_change",
+                "rollback_change",
+                "list_rollback_history",
+                "preview_rollback_change",
+            }:
+                self._refresh_rollback_history_panel()
+
+        self.chat_scroll.verticalScrollBar().setValue(
+            self.chat_scroll.verticalScrollBar().maximum()
+        )
+
     def _submit_text(self, text: str, force_agent: bool = False, clear_input: bool = False) -> None:
         if self._is_busy():
             return
@@ -2642,17 +2728,12 @@ QListWidget::item:selected {{
         self._render_messages(history, thinking=True)
 
         if use_agent:
-            self.worker = AgentWorker(self.current_session, normalized, history)
+            worker: ChatWorker | AgentWorker = AgentWorker(self.current_session, normalized, history)
         else:
-            self.worker = ChatWorker(self.current_session, normalized, history)
+            worker = ChatWorker(self.current_session, normalized, history)
+        self.worker = worker
+        self._attach_worker_signals(worker)
 
-        self.worker.chunk.connect(self._on_chunk)
-        self.worker.done.connect(self._on_done)
-        self.worker.error.connect(self._on_error)
-        self.worker.title_ready.connect(self._on_title)
-        if isinstance(self.worker, AgentWorker):
-            self.worker.tool_event.connect(self._on_tool_event)
-        worker = self.worker
         QTimer.singleShot(
             THINKING_PLACEHOLDER_DELAY_MS,
             lambda current_worker=worker: self._start_worker(current_worker),
@@ -2672,22 +2753,24 @@ QListWidget::item:selected {{
             return
         worker.start()
 
-    def _on_chunk(self, piece: str):
-        if isinstance(self.worker, AgentWorker):
+    def _on_chunk(self, worker: ChatWorker | AgentWorker, piece: str):
+        if worker is not self.worker or isinstance(worker, AgentWorker):
             return
         self._streaming_buf += piece
         self._schedule_stream_flush()
 
-    def _on_done(self, full: str):
-        worker = self.worker
-        was_stopped = bool(self._stop_requested or (worker and getattr(worker, "_stop", False)))
+    def _on_done(self, worker: ChatWorker | AgentWorker, full: str):
+        if worker is not self.worker:
+            return
+
+        was_stopped = bool(self._stop_requested or getattr(worker, "_stop", False))
         if was_stopped and not full.strip():
             self._finalize_stopped_worker(worker)
             return
 
         card = getattr(self, "_streaming_card", None)
         row = getattr(self, "_streaming_row", None)
-        self._activity = "已停止" if was_stopped else "就绪"
+        self._activity = "Stopped" if was_stopped else "Ready"
         if card is not None:
             card.update_body(full, streaming=False)
             if row is not None:
@@ -2699,7 +2782,7 @@ QListWidget::item:selected {{
             self._render_messages(msgs)
         trace = self._agent_trace_card if self.agent_btn.isChecked() else None
         if trace is not None:
-            trace.set_state("已停止" if was_stopped else "完成", kind="active" if was_stopped else "done")
+            trace.set_state("Stopped" if was_stopped else "Done", kind="active" if was_stopped else "done")
         self._send_locked = False
         self.worker = None
         self._stop_requested = False
@@ -2716,20 +2799,22 @@ QListWidget::item:selected {{
         self._refresh_rollback_history_panel()
         self.input.setFocus()
 
-    def _on_error(self, msg: str):
+    def _on_error(self, worker: ChatWorker | AgentWorker, msg: str):
+        if worker is not self.worker:
+            return
         if self._stop_requested:
-            self._finalize_stopped_worker(self.worker)
+            self._finalize_stopped_worker(worker)
             return
 
         msgs = db.get_messages(self.current_session) if self.current_session else []
-        self._activity = "就绪"
+        self._activity = "Ready"
         streaming_html = None
-        if not isinstance(self.worker, AgentWorker) and self._streaming_buf:
+        if not isinstance(worker, AgentWorker) and self._streaming_buf:
             streaming_html = self._streaming_buf
         self._render_messages(msgs, streaming_html=streaming_html, error_text=msg)
         trace = self._agent_trace_card if self.agent_btn.isChecked() else None
         if trace is not None:
-            trace.set_state("失败", kind="error")
+            trace.set_state("Failed", kind="error")
         self._send_locked = False
         self.worker = None
         self._stop_requested = False
@@ -2750,7 +2835,15 @@ QListWidget::item:selected {{
     # ==================== Qt ====================
 
     def closeEvent(self, e):
-        if self.worker and self.worker.isRunning():
-            self.worker.stop()
-            self.worker.wait(2000)
+        workers: list[ChatWorker | AgentWorker] = []
+        if self.worker is not None:
+            workers.append(self.worker)
+        for worker in list(self._detached_workers):
+            if worker not in workers:
+                workers.append(worker)
+        for worker in workers:
+            worker.stop()
+        for worker in workers:
+            if worker.isRunning():
+                worker.wait(2000)
         super().closeEvent(e)
