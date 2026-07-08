@@ -7,7 +7,14 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from ..config import AGENT_SYSTEM_PROMPT, MODEL
+from ..config import (
+    AGENT_SYSTEM_PROMPT,
+    APP_LANGUAGE,
+    FILESYSTEM_COMMAND_SCOPE,
+    FILESYSTEM_READ_SCOPE,
+    FILESYSTEM_WRITE_SCOPE,
+    MODEL,
+)
 from ..llm import AGENT_REQUEST_TIMEOUT_SECONDS, client
 from .workspace import WorkspaceError, WorkspaceTools
 
@@ -1737,6 +1744,17 @@ class CodeAgent:
                 "role": "system",
                 "content": (
                     AGENT_SYSTEM_PROMPT.format(workspace_root=str(self.workspace.root))
+                    + "\n\n"
+                    + (
+                        "Filesystem permissions:\n"
+                        f"- read: {FILESYSTEM_READ_SCOPE}\n"
+                        f"- write: {FILESYSTEM_WRITE_SCOPE}\n"
+                        f"- command: {FILESYSTEM_COMMAND_SCOPE}\n"
+                        f"Language: {'English' if APP_LANGUAGE == 'en' else 'Simplified Chinese'}\n"
+                        "Use this language for user-facing status and final answers. "
+                        "Use absolute paths only when the user's task clearly requires them. "
+                        "Do not write, delete, rename, or run commands outside the allowed permission scope."
+                    )
                     + "\n\n"
                     + AGENT_WORKFLOW_HINT
                 ),

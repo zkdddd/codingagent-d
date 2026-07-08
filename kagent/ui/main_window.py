@@ -1,12 +1,18 @@
 import html
 import json
+import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -14,6 +20,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -24,7 +31,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from dotenv import set_key
 
+from .. import config as app_config
 from .. import db
 from ..agent import WorkspaceTools
 from ..config import MODEL
@@ -53,6 +62,118 @@ C_ACCENT_HOVER = "#7C3AED"
 C_ACCENT_2 = "#2563EB"
 C_USER_ACCENT = "#0EA5E9"
 C_ERROR = "#F87171"
+
+
+UI_TEXT = {
+    "zh": {
+        "settings": "设置",
+        "settings_title": "设置",
+        "settings_heading": "应用设置",
+        "language": "语言",
+        "language_zh": "中文",
+        "language_en": "English",
+        "read_scope": "读取范围",
+        "write_scope": "写入范围",
+        "command_scope": "命令范围",
+        "extra_write_roots": "额外写入目录",
+        "extra_command_roots": "额外命令目录",
+        "settings_hint": "workspace 表示仅允许工作区和额外目录；all 表示允许整个文件系统。",
+        "browse": "选择",
+        "save": "保存",
+        "cancel": "取消",
+        "select_allowed_directory": "选择允许访问的目录",
+        "path_placeholder": "Windows 下多个路径用 ; 分隔",
+        "settings_busy": "请等待当前 agent 任务结束后再修改设置。",
+        "settings_saved": "设置已更新。",
+        "permissions": "权限",
+        "permissions_saved": "权限已更新。",
+        "read_permission": "读取",
+        "write_permission": "写入",
+        "command_permission": "命令",
+        "workspace_scope": "工作区",
+        "all_scope": "全部",
+        "refresh": "刷新",
+        "open_in_chat": "在聊天中打开",
+        "restore": "恢复",
+        "history": "历史",
+        "workspace": "工作区",
+        "new_chat": "+  新建会话",
+        "input_hint": "用自然语言描述任务，Agent 会自己决定是否读取文件、修改代码和执行命令",
+        "send": "发送",
+        "stop": "停止",
+        "stopping": "停止中",
+        "messages": "条消息",
+        "ready": "就绪",
+        "working": "工作中",
+        "stopping_status": "停止中",
+        "stopped": "已停止",
+        "rollback_select": "选择一个回滚记录",
+        "rollback_meta_empty": "该版本的文件差异会显示在这里。",
+        "rollback_preview_empty": "回滚预览会显示在这里。",
+        "no_active_session": "没有活动会话",
+        "no_rollback_history": "暂无回滚历史",
+        "entries": "条记录",
+    },
+    "en": {
+        "settings": "Settings",
+        "settings_title": "Settings",
+        "settings_heading": "App Settings",
+        "language": "Language",
+        "language_zh": "中文",
+        "language_en": "English",
+        "read_scope": "Read scope",
+        "write_scope": "Write scope",
+        "command_scope": "Command scope",
+        "extra_write_roots": "Extra write roots",
+        "extra_command_roots": "Extra command roots",
+        "settings_hint": "workspace limits access to WORKSPACE_ROOT plus extra roots; all allows the whole filesystem.",
+        "browse": "Browse",
+        "save": "Save",
+        "cancel": "Cancel",
+        "select_allowed_directory": "Select allowed directory",
+        "path_placeholder": "Separate multiple paths with ; on Windows",
+        "settings_busy": "Wait for the current agent task to finish before changing settings.",
+        "settings_saved": "Settings updated.",
+        "permissions": "Permissions",
+        "permissions_saved": "Permissions updated.",
+        "read_permission": "Read",
+        "write_permission": "Write",
+        "command_permission": "Command",
+        "workspace_scope": "Workspace",
+        "all_scope": "All",
+        "refresh": "Refresh",
+        "open_in_chat": "Open In Chat",
+        "restore": "Restore",
+        "history": "History",
+        "workspace": "Workspace",
+        "new_chat": "+  New chat",
+        "input_hint": "Describe a task. Agent can read files, edit code, and run commands when needed.",
+        "send": "Send",
+        "stop": "Stop",
+        "stopping": "Stopping",
+        "messages": "messages",
+        "ready": "Ready",
+        "working": "Working",
+        "stopping_status": "Stopping",
+        "stopped": "Stopped",
+        "rollback_select": "Select a rollback entry",
+        "rollback_meta_empty": "The exact file diff for that version will appear here.",
+        "rollback_preview_empty": "Rollback preview will appear here.",
+        "no_active_session": "No active session",
+        "no_rollback_history": "No rollback history yet",
+        "entries": "entries",
+    },
+}
+
+
+def _language_code(value: str | None = None) -> str:
+    raw = str(value if value is not None else getattr(app_config, "APP_LANGUAGE", "zh")).strip().lower()
+    return "en" if raw == "en" else "zh"
+
+
+def _t(key: str) -> str:
+    lang = _language_code()
+    return UI_TEXT.get(lang, UI_TEXT["zh"]).get(key, UI_TEXT["zh"].get(key, key))
 
 
 MESSAGE_BODY_STYLE = (
@@ -1149,6 +1270,78 @@ class ToolTraceCard(QFrame):
         return entry
 
 
+class PermissionSettingsDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(_t("settings_title"))
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self.setStyleSheet(
+            f"background: {C_BG_PANEL}; color: {C_TEXT_MAIN};"
+            f"QLabel {{ color: {C_TEXT_SUB}; }}"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        title = QLabel(_t("settings_heading"))
+        title.setFont(QFont("Microsoft YaHei", 12, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C_TEXT_MAIN};")
+        layout.addWidget(title)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+
+        self.language = self._language_combo(app_config.APP_LANGUAGE)
+
+        form.addRow(_t("language"), self.language)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.setStyleSheet(
+            "QPushButton { background: rgba(255, 255, 255, 0.06); color: #E5E7EB; "
+            f"border: 1px solid {C_BORDER}; border-radius: 10px; padding: 7px 14px; }}"
+            "QPushButton:hover { background: rgba(255, 255, 255, 0.10); }"
+        )
+        save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if save_button is not None:
+            save_button.setText(_t("save"))
+        if cancel_button is not None:
+            cancel_button.setText(_t("cancel"))
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _language_combo(value: str) -> QComboBox:
+        combo = QComboBox()
+        combo.addItem(_t("language_zh"), "zh")
+        combo.addItem(_t("language_en"), "en")
+        current = _language_code(value)
+        for idx in range(combo.count()):
+            if combo.itemData(idx) == current:
+                combo.setCurrentIndex(idx)
+                break
+        combo.setStyleSheet(
+            f"background: {C_BG_INPUT}; color: {C_TEXT_MAIN}; border: 1px solid {C_BORDER}; "
+            "border-radius: 8px; padding: 6px 8px;"
+        )
+        return combo
+
+    def values(self) -> dict[str, str]:
+        return {
+            "APP_LANGUAGE": str(self.language.currentData() or "zh"),
+        }
+
+
 class ChatWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1211,6 +1404,7 @@ class ChatWindow(QMainWindow):
         else:
             self._render_messages([])
 
+        self._apply_language_texts()
         self._refresh_chat_header()
         self._update_status()
 
@@ -1279,7 +1473,7 @@ class ChatWindow(QMainWindow):
         v.setContentsMargins(12, 14, 12, 12)
         v.setSpacing(10)
 
-        self.new_btn = QPushButton("+  新建会话")
+        self.new_btn = QPushButton(_t("new_chat"))
         self.new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_btn.setStyleSheet(
             f"background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {C_ACCENT}, stop:1 {C_ACCENT_2}); "
@@ -1442,7 +1636,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         header.addWidget(self.rollback_count_label)
         header.addStretch(1)
 
-        self.rollback_refresh_btn = QPushButton("Refresh")
+        self.rollback_refresh_btn = QPushButton(_t("refresh"))
         self.rollback_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rollback_refresh_btn.clicked.connect(self._refresh_rollback_history_panel)
         self.rollback_refresh_btn.setStyleSheet(
@@ -1526,7 +1720,7 @@ QListWidget::item:selected {{
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
 
-        self.rollback_open_trace_btn = QPushButton("Open In Chat")
+        self.rollback_open_trace_btn = QPushButton(_t("open_in_chat"))
         self.rollback_open_trace_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rollback_open_trace_btn.clicked.connect(self._open_selected_rollback_preview_in_chat)
         self.rollback_open_trace_btn.setStyleSheet(
@@ -1536,7 +1730,7 @@ QListWidget::item:selected {{
         )
         actions.addWidget(self.rollback_open_trace_btn)
 
-        self.rollback_restore_btn = QPushButton("Restore")
+        self.rollback_restore_btn = QPushButton(_t("restore"))
         self.rollback_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rollback_restore_btn.clicked.connect(self._restore_selected_rollback)
         self.rollback_restore_btn.setStyleSheet(
@@ -1576,14 +1770,26 @@ QListWidget::item:selected {{
         self.chat_subtitle_label.setFont(QFont("Microsoft YaHei", 8))
         self.chat_subtitle_label.setStyleSheet(f"color: {C_TEXT_SUB};")
 
-        self.chat_subtitle_label.setText(f"{MODEL} | Workspace | 0 messages | Ready")
+        self.chat_subtitle_label.setText(
+            f"{MODEL} | {_t('workspace')} | 0 {_t('messages')} | {_t('ready')}"
+        )
 
         title_stack.addWidget(self.chat_title_label)
         title_stack.addWidget(self.chat_subtitle_label)
         h.addLayout(title_stack)
         h.addStretch(1)
 
-        self.rollback_history_btn = QPushButton("History")
+        self.settings_btn = QPushButton(_t("settings"))
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.clicked.connect(self._open_permission_settings)
+        self.settings_btn.setStyleSheet(
+            "background: rgba(255, 255, 255, 0.04); color: #94A3B8; "
+            f"border: 1px solid {C_BORDER}; border-radius: 12px; "
+            "padding: 7px 12px; font-size: 12px; font-weight: 800;"
+        )
+        h.addWidget(self.settings_btn)
+
+        self.rollback_history_btn = QPushButton(_t("history"))
         self.rollback_history_btn.setCheckable(True)
         self.rollback_history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rollback_history_btn.clicked.connect(self._toggle_rollback_history_panel)
@@ -1592,7 +1798,7 @@ QListWidget::item:selected {{
 
         self.chat_model_chip = _chip_label(MODEL, "#F5F3FF", "rgba(124, 58, 237, 0.16)", "rgba(124, 58, 237, 0.34)")
         self.chat_mode_chip = _chip_label("Chat", "#DBEAFE", "rgba(37, 99, 235, 0.16)", "rgba(37, 99, 235, 0.34)")
-        self.chat_mode_chip.setText("Workspace")
+        self.chat_mode_chip.setText(_t("workspace"))
         self.chat_mode_chip.setStyleSheet(
             "background: rgba(124, 58, 237, 0.16); color: #E9D5FF; "
             "border: 1px solid rgba(124, 58, 237, 0.34); border-radius: 999px; "
@@ -1636,6 +1842,8 @@ QListWidget::item:selected {{
         hint = QLabel("Enter 发送 · Shift+Enter 换行")
         hint.setStyleSheet(f"color: {C_TEXT_PLACEHOLDER}; font-size: 11px;")
         hint.setText("用自然语言描述任务，Agent 会自己决定是否读取文件、修改代码和执行命令")
+        hint.setText(_t("input_hint"))
+        self.input_hint_label = hint
         actions.addWidget(hint)
         actions.addStretch(1)
 
@@ -1649,6 +1857,16 @@ QListWidget::item:selected {{
         self.agent_btn.setVisible(False)
         actions.addWidget(self.agent_btn)
         self._sync_mode_button_style()
+
+        self.permission_menu_btn = QPushButton(_t("permissions"))
+        self.permission_menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.permission_menu_btn.setStyleSheet(
+            "background: rgba(255, 255, 255, 0.04); color: #94A3B8; "
+            f"border: 1px solid {C_BORDER}; border-radius: 12px; "
+            "padding: 8px 12px; font-size: 12px; font-weight: 800;"
+        )
+        self.permission_menu_btn.clicked.connect(self._show_permission_menu)
+        actions.addWidget(self.permission_menu_btn)
 
         self.send_btn = QPushButton("发送")
         self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1688,6 +1906,7 @@ QListWidget::item:selected {{
     def _sync_rollback_history_button_style(self) -> None:
         if not hasattr(self, "rollback_history_btn"):
             return
+        self.rollback_history_btn.setText(_t("history"))
         if self._rollback_history_visible:
             self.rollback_history_btn.setStyleSheet(
                 "background: rgba(37, 99, 235, 0.18); color: #DBEAFE; "
@@ -1701,19 +1920,152 @@ QListWidget::item:selected {{
                 "padding: 7px 12px; font-size: 12px; font-weight: 800;"
             )
 
+    def _activity_label(self) -> str:
+        mapping = {
+            "Ready": _t("ready"),
+            "Working": _t("working"),
+            "Stopping": _t("stopping_status"),
+            "Stopped": _t("stopped"),
+        }
+        return mapping.get(self._activity, self._activity)
+
+    def _apply_language_texts(self) -> None:
+        self.setWindowTitle("kagent")
+        if hasattr(self, "new_btn"):
+            self.new_btn.setText(_t("new_chat"))
+        if hasattr(self, "settings_btn"):
+            self.settings_btn.setText(_t("settings"))
+        if hasattr(self, "permission_menu_btn"):
+            self.permission_menu_btn.setText(_t("permissions"))
+        if hasattr(self, "rollback_history_btn"):
+            self.rollback_history_btn.setText(_t("history"))
+        if hasattr(self, "rollback_refresh_btn"):
+            self.rollback_refresh_btn.setText(_t("refresh"))
+        if hasattr(self, "rollback_open_trace_btn"):
+            self.rollback_open_trace_btn.setText(_t("open_in_chat"))
+        if hasattr(self, "rollback_restore_btn"):
+            self.rollback_restore_btn.setText(_t("restore"))
+        if hasattr(self, "input_hint_label"):
+            self.input_hint_label.setText(_t("input_hint"))
+        if hasattr(self, "send_btn"):
+            self.send_btn.setText(_t("send"))
+        if hasattr(self, "stop_btn"):
+            self.stop_btn.setText(_t("stopping") if self._stop_requested else _t("stop"))
+        if hasattr(self, "chat_mode_chip"):
+            self.chat_mode_chip.setText(_t("workspace"))
+        self._sync_rollback_history_button_style()
+
+    def _scope_label(self, value: str) -> str:
+        return _t("all_scope") if str(value).strip().lower() == "all" else _t("workspace_scope")
+
+    def _scope_action(
+        self,
+        menu: QMenu,
+        label: str,
+        env_key: str,
+        current: str,
+    ) -> None:
+        submenu = menu.addMenu(f"{label}: {self._scope_label(current)}")
+        submenu.setStyleSheet(
+            f"background: {C_BG_PANEL}; color: {C_TEXT_MAIN}; border: 1px solid {C_BORDER};"
+        )
+        for value, value_label in (("workspace", _t("workspace_scope")), ("all", _t("all_scope"))):
+            action = QAction(value_label, submenu)
+            action.setCheckable(True)
+            action.setChecked(str(current).strip().lower() == value)
+            action.triggered.connect(
+                lambda checked=False, key=env_key, selected=value: self._set_permission_scope(key, selected)
+            )
+            submenu.addAction(action)
+
+    def _show_permission_menu(self) -> None:
+        if self._is_busy():
+            QMessageBox.information(self, "kagent", _t("settings_busy"))
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"background: {C_BG_PANEL}; color: {C_TEXT_MAIN}; border: 1px solid {C_BORDER};"
+            "QMenu::item { padding: 7px 26px 7px 12px; }"
+            "QMenu::item:selected { background: rgba(37, 99, 235, 0.20); }"
+        )
+        self._scope_action(menu, _t("read_permission"), "KAGENT_FS_READ_SCOPE", app_config.FILESYSTEM_READ_SCOPE)
+        self._scope_action(menu, _t("write_permission"), "KAGENT_FS_WRITE_SCOPE", app_config.FILESYSTEM_WRITE_SCOPE)
+        self._scope_action(menu, _t("command_permission"), "KAGENT_FS_COMMAND_SCOPE", app_config.FILESYSTEM_COMMAND_SCOPE)
+        menu.exec(self.permission_menu_btn.mapToGlobal(self.permission_menu_btn.rect().bottomLeft()))
+
+    def _set_permission_scope(self, key: str, value: str) -> None:
+        self._apply_settings_values({key: value})
+        self._apply_language_texts()
+        self._refresh_chat_header()
+
+    def _open_permission_settings(self) -> None:
+        if self._is_busy():
+            QMessageBox.information(
+                self,
+                "kagent",
+                _t("settings_busy"),
+            )
+            return
+
+        dialog = PermissionSettingsDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        values = dialog.values()
+        self._apply_settings_values(values)
+        self._apply_language_texts()
+        self._refresh_chat_header()
+        QMessageBox.information(self, "kagent", _t("settings_saved"))
+
+    def _apply_settings_values(self, values: dict[str, str]) -> None:
+        env_path = Path(app_config.BASE_DIR) / ".env"
+        env_path.touch(exist_ok=True)
+
+        for key, value in values.items():
+            normalized = str(value or "").strip()
+            os.environ[key] = normalized
+            set_key(str(env_path), key, normalized)
+
+        if "APP_LANGUAGE" in values:
+            app_config.APP_LANGUAGE = _language_code(values.get("APP_LANGUAGE"))
+        if "KAGENT_FS_READ_SCOPE" in values:
+            app_config.FILESYSTEM_READ_SCOPE = values["KAGENT_FS_READ_SCOPE"]
+        if "KAGENT_FS_WRITE_SCOPE" in values:
+            app_config.FILESYSTEM_WRITE_SCOPE = values["KAGENT_FS_WRITE_SCOPE"]
+        if "KAGENT_FS_COMMAND_SCOPE" in values:
+            app_config.FILESYSTEM_COMMAND_SCOPE = values["KAGENT_FS_COMMAND_SCOPE"]
+        if "KAGENT_ALLOWED_WRITE_ROOTS" in values:
+            app_config.ALLOWED_WRITE_ROOTS = values["KAGENT_ALLOWED_WRITE_ROOTS"]
+        if "KAGENT_ALLOWED_COMMAND_ROOTS" in values:
+            app_config.ALLOWED_COMMAND_ROOTS = values["KAGENT_ALLOWED_COMMAND_ROOTS"]
+
+        from ..agent import code_agent as code_agent_module
+        from ..agent import workspace as workspace_module
+
+        workspace_module.FILESYSTEM_READ_SCOPE = app_config.FILESYSTEM_READ_SCOPE
+        workspace_module.FILESYSTEM_WRITE_SCOPE = app_config.FILESYSTEM_WRITE_SCOPE
+        workspace_module.FILESYSTEM_COMMAND_SCOPE = app_config.FILESYSTEM_COMMAND_SCOPE
+        workspace_module.ALLOWED_WRITE_ROOTS = app_config.ALLOWED_WRITE_ROOTS
+        workspace_module.ALLOWED_COMMAND_ROOTS = app_config.ALLOWED_COMMAND_ROOTS
+        code_agent_module.FILESYSTEM_READ_SCOPE = app_config.FILESYSTEM_READ_SCOPE
+        code_agent_module.FILESYSTEM_WRITE_SCOPE = app_config.FILESYSTEM_WRITE_SCOPE
+        code_agent_module.FILESYSTEM_COMMAND_SCOPE = app_config.FILESYSTEM_COMMAND_SCOPE
+        code_agent_module.APP_LANGUAGE = app_config.APP_LANGUAGE
+
     def _workspace_tools_for_session(self) -> WorkspaceTools | None:
         if not self.current_session:
             return None
         return WorkspaceTools(session_id=self.current_session)
 
-    def _set_rollback_detail_empty(self, text: str = "Select a rollback entry") -> None:
+    def _set_rollback_detail_empty(self, text: str | None = None) -> None:
         if not hasattr(self, "rollback_detail_title"):
             return
-        self.rollback_detail_title.setText(text)
-        self.rollback_detail_meta.setText("The exact file diff for that version will appear here.")
+        self.rollback_detail_title.setText(text or _t("rollback_select"))
+        self.rollback_detail_meta.setText(_t("rollback_meta_empty"))
         self.rollback_detail_files.setText("")
         self.rollback_detail_body.setHtml(
-            '<div class="typing">Rollback preview will appear here.</div>'
+            f'<div class="typing">{html.escape(_t("rollback_preview_empty"))}</div>'
         )
         self.rollback_open_trace_btn.setEnabled(False)
         self.rollback_restore_btn.setEnabled(False)
@@ -1753,16 +2105,16 @@ QListWidget::item:selected {{
         workspace = self._workspace_tools_for_session()
         if workspace is None:
             self.rollback_list.clear()
-            self.rollback_count_label.setText("0 entries")
+            self.rollback_count_label.setText(f"0 {_t('entries')}")
             self._rollback_history_items = []
             self._selected_rollback_id = None
-            self._set_rollback_detail_empty("No active session")
+            self._set_rollback_detail_empty(_t("no_active_session"))
             return
 
         data = workspace.list_rollback_history(limit=40, include_inactive=True)
         entries = data.get("entries") if isinstance(data.get("entries"), list) else []
         self._rollback_history_items = [item for item in entries if isinstance(item, dict)]
-        self.rollback_count_label.setText(f"{len(self._rollback_history_items)} entries")
+        self.rollback_count_label.setText(f"{len(self._rollback_history_items)} {_t('entries')}")
 
         current_id = select_id if select_id is not None else self._selected_rollback_id
         self.rollback_list.blockSignals(True)
@@ -1788,7 +2140,7 @@ QListWidget::item:selected {{
                 self._show_rollback_detail(int(item.data(Qt.ItemDataRole.UserRole)))
         else:
             self._selected_rollback_id = None
-            self._set_rollback_detail_empty("No rollback history yet")
+            self._set_rollback_detail_empty(_t("no_rollback_history"))
 
     def _on_rollback_item_selection_changed(self) -> None:
         if not hasattr(self, "rollback_list"):
@@ -1807,7 +2159,7 @@ QListWidget::item:selected {{
     def _show_rollback_detail(self, rollback_id: int) -> None:
         workspace = self._workspace_tools_for_session()
         if workspace is None:
-            self._set_rollback_detail_empty("No active session")
+            self._set_rollback_detail_empty(_t("no_active_session"))
             return
 
         preview = workspace.preview_rollback_change(int(rollback_id))
@@ -2381,21 +2733,21 @@ QListWidget::item:selected {{
                     "border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; "
                     "padding: 8px 18px; font-size: 13px; font-weight: 800;"
                 )
-                self.stop_btn.setText("停止中")
+                self.stop_btn.setText(_t("stopping"))
             else:
                 self.stop_btn.setStyleSheet(
                     "background: rgba(239, 68, 68, 0.14); color: #FCA5A5; "
                     "border: 1px solid rgba(248, 113, 113, 0.28); border-radius: 14px; "
                     "padding: 8px 18px; font-size: 13px; font-weight: 800;"
                 )
-                self.stop_btn.setText("停止")
+                self.stop_btn.setText(_t("stop"))
         else:
             self.stop_btn.setStyleSheet(
                 "background: rgba(255, 255, 255, 0.04); color: #64748B; "
                 f"border: 1px solid {C_BORDER}; border-radius: 14px; "
                 "padding: 8px 18px; font-size: 13px; font-weight: 800;"
             )
-            self.stop_btn.setText("停止")
+            self.stop_btn.setText(_t("stop"))
 
     def _sync_mode_button_style(self):
         if self.agent_btn.isChecked():
@@ -2414,6 +2766,10 @@ QListWidget::item:selected {{
     def _set_busy_controls(self, busy: bool):
         self.new_btn.setEnabled(not busy)
         self.session_list.setEnabled(not busy)
+        if hasattr(self, "settings_btn"):
+            self.settings_btn.setEnabled(not busy)
+        if hasattr(self, "permission_menu_btn"):
+            self.permission_menu_btn.setEnabled(not busy)
         self.send_btn.setEnabled(not busy)
         self.stop_btn.setEnabled(busy and not self._stop_requested)
         self._sync_mode_button_style()
@@ -2687,9 +3043,9 @@ QListWidget::item:selected {{
 
         self.chat_title_label.setText(title)
         self.chat_subtitle_label.setText(
-            f"{MODEL} | Workspace | {count} messages | {self._activity}"
+            f"{MODEL} | {_t('workspace')} | {count} {_t('messages')} | {self._activity_label()}"
         )
-        self.chat_mode_chip.setText("Workspace")
+        self.chat_mode_chip.setText(_t("workspace"))
         self.chat_mode_chip.setStyleSheet(
             "background: rgba(124, 58, 237, 0.16); color: #E9D5FF; "
             "border: 1px solid rgba(124, 58, 237, 0.34); border-radius: 999px; "
@@ -2698,10 +3054,10 @@ QListWidget::item:selected {{
 
     def _update_status(self):
         count = len(db.get_messages(self.current_session)) if self.current_session else 0
-        self.status_count.setText(f"{count} messages")
+        self.status_count.setText(f"{count} {_t('messages')}")
 
     def _stopped_message_for_worker(self, worker: AgentWorker | None) -> str:
-        return "Stopped"
+        return _t("stopped")
 
     def _finalize_stopped_worker(self, worker: AgentWorker | None):
         stopped_text = self._stopped_message_for_worker(worker)

@@ -11,7 +11,15 @@ from typing import Any
 from uuid import uuid4
 
 from .. import db
-from ..config import ROLLBACK_ROOT, WORKSPACE_ROOT
+from ..config import (
+    ALLOWED_COMMAND_ROOTS,
+    ALLOWED_WRITE_ROOTS,
+    FILESYSTEM_COMMAND_SCOPE,
+    FILESYSTEM_READ_SCOPE,
+    FILESYSTEM_WRITE_SCOPE,
+    ROLLBACK_ROOT,
+    WORKSPACE_ROOT,
+)
 
 
 DEFAULT_IGNORED_DIRS = {
@@ -37,19 +45,65 @@ class WorkspaceTools:
         self.root = Path(root).resolve()
         self.session_id = session_id
         self.rollback_root = Path(ROLLBACK_ROOT).resolve()
+        self.read_scope = self._normalize_scope(FILESYSTEM_READ_SCOPE, default="all")
+        self.write_scope = self._normalize_scope(FILESYSTEM_WRITE_SCOPE, default="workspace")
+        self.command_scope = self._normalize_scope(
+            FILESYSTEM_COMMAND_SCOPE,
+            default="workspace",
+        )
+        self.allowed_write_roots = self._parse_roots(ALLOWED_WRITE_ROOTS)
+        self.allowed_command_roots = self._parse_roots(ALLOWED_COMMAND_ROOTS)
 
-    def _resolve_path(self, raw_path: str) -> Path:
+    @staticmethod
+    def _normalize_scope(raw: str, default: str) -> str:
+        value = str(raw or default).strip().lower()
+        return value if value in {"workspace", "all"} else default
+
+    @staticmethod
+    def _parse_roots(raw: str) -> list[Path]:
+        roots: list[Path] = []
+        for item in str(raw or "").split(os.pathsep):
+            item = item.strip().strip('"')
+            if item:
+                roots.append(Path(item).expanduser().resolve())
+        return roots
+
+    @staticmethod
+    def _path_is_within(path: Path, root: Path) -> bool:
+        return path == root or root in path.parents
+
+    def _allowed_roots_for_access(self, access: str) -> list[Path]:
+        if access == "write":
+            return [self.root, *self.allowed_write_roots]
+        if access == "command":
+            return [self.root, *self.allowed_command_roots]
+        return [self.root]
+
+    def _scope_for_access(self, access: str) -> str:
+        if access == "write":
+            return self.write_scope
+        if access == "command":
+            return self.command_scope
+        return self.read_scope
+
+    def _resolve_path(self, raw_path: str, access: str = "read") -> Path:
         if not raw_path:
             raise WorkspaceError("path is required")
+        access = access if access in {"read", "write", "command"} else "read"
         candidate = Path(raw_path)
         if not candidate.is_absolute():
             candidate = (self.root / candidate).resolve()
         else:
             candidate = candidate.resolve()
-        if candidate == self.root:
+        if self._scope_for_access(access) == "all":
             return candidate
-        if self.root not in candidate.parents:
-            raise WorkspaceError(f"Path outside workspace: {raw_path}")
+        if not any(
+            self._path_is_within(candidate, root)
+            for root in self._allowed_roots_for_access(access)
+        ):
+            raise WorkspaceError(
+                f"Path outside allowed {access} roots: {raw_path}"
+            )
         return candidate
 
     def _rel(self, path: Path) -> str:
@@ -58,6 +112,17 @@ class WorkspaceTools:
             return "." if not rel.parts else rel.as_posix()
         except Exception:
             return path.as_posix() if isinstance(path, Path) else str(path)
+
+    def _snapshot_rel(self, path: Path) -> str:
+        try:
+            return path.relative_to(self.root).as_posix()
+        except ValueError:
+            absolute = path.resolve()
+            drive = absolute.drive.rstrip(":").replace("\\", "_").replace("/", "_")
+            parts = [part for part in absolute.parts if part not in {absolute.anchor, absolute.drive}]
+            safe_parts = [self._safe_token(part) for part in parts]
+            prefix = self._safe_token(drive or "root")
+            return str(Path("__absolute__") / prefix / Path(*safe_parts))
 
     @staticmethod
     def _safe_token(raw: str) -> str:
@@ -99,7 +164,7 @@ class WorkspaceTools:
         if not path.exists():
             return {"path": rel_path, "kind": "missing"}
 
-        snapshot_rel = rel_path
+        snapshot_rel = self._snapshot_rel(path)
         snapshot_path = snapshot_root / Path(snapshot_rel)
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_dir():
@@ -166,7 +231,7 @@ class WorkspaceTools:
         state: dict[str, Any],
         snapshot_root: Path | None,
     ) -> str:
-        target = self._resolve_path(str(state["path"]))
+        target = self._resolve_path(str(state["path"]), access="write")
         kind = str(state.get("kind") or "")
 
         if kind == "missing":
@@ -262,7 +327,7 @@ class WorkspaceTools:
         while True:
             if anchor.exists() and anchor.is_dir():
                 break
-            if anchor == self.root:
+            if anchor == self.root or anchor.parent == anchor:
                 if not anchor.exists() or not anchor.is_dir():
                     return []
                 break
@@ -340,7 +405,7 @@ class WorkspaceTools:
         end_line: int | None = None,
         max_chars: int = 20000,
     ) -> dict[str, Any]:
-        file_path = self._resolve_path(path)
+        file_path = self._resolve_path(path, access="read")
         if not file_path.exists():
             raise WorkspaceError(self._not_found_message("File", file_path))
         if file_path.is_dir():
@@ -386,7 +451,7 @@ class WorkspaceTools:
         include_hidden: bool = False,
         max_results: int = 500,
     ) -> dict[str, Any]:
-        start = self._resolve_path(path)
+        start = self._resolve_path(path, access="read")
         if not start.exists():
             raise WorkspaceError(self._not_found_message("Path", start))
         if start.is_file():
@@ -466,7 +531,7 @@ class WorkspaceTools:
         if not query or not query.strip():
             raise WorkspaceError("query is required")
 
-        start = self._resolve_path(path)
+        start = self._resolve_path(path, access="read")
         if not start.exists():
             raise WorkspaceError(self._not_found_message("Path", start))
 
@@ -554,7 +619,7 @@ class WorkspaceTools:
 
         files_touched = self._patch_paths(patch)
         snapshot_token, restore_states = self._capture_restore_states(
-            [self._resolve_path(path) for path in files_touched]
+            [self._resolve_path(path, access="write") for path in files_touched]
         )
         proc = subprocess.run(
             ["git", "apply", "--recount", "--whitespace=nowarn"],
@@ -603,7 +668,7 @@ class WorkspaceTools:
         }
 
     def preview_write_file(self, path: str, content: str, max_preview_chars: int = 8000) -> dict[str, Any]:
-        file_path = self._resolve_path(path)
+        file_path = self._resolve_path(path, access="write")
         if file_path.exists() and file_path.is_dir():
             raise WorkspaceError(f"Expected a file but found a directory: {self._rel(file_path)}")
 
@@ -646,7 +711,7 @@ class WorkspaceTools:
         if not command or not command.strip():
             raise WorkspaceError("command is required")
 
-        workdir = self.root if not cwd else self._resolve_path(cwd)
+        workdir = self.root if not cwd else self._resolve_path(cwd, access="command")
         if not workdir.exists():
             raise WorkspaceError(self._not_found_message("Working directory", workdir))
         if not workdir.is_dir():
@@ -662,8 +727,8 @@ class WorkspaceTools:
         }
 
     def preview_rename_path(self, source_path: str, target_path: str) -> dict[str, Any]:
-        source = self._resolve_path(source_path)
-        target = self._resolve_path(target_path)
+        source = self._resolve_path(source_path, access="write")
+        target = self._resolve_path(target_path, access="write")
 
         if not source.exists():
             raise WorkspaceError(self._not_found_message("Path", source))
@@ -684,8 +749,8 @@ class WorkspaceTools:
         }
 
     def preview_copy_path(self, source_path: str, target_path: str) -> dict[str, Any]:
-        source = self._resolve_path(source_path)
-        target = self._resolve_path(target_path)
+        source = self._resolve_path(source_path, access="read")
+        target = self._resolve_path(target_path, access="write")
 
         if not source.exists():
             raise WorkspaceError(self._not_found_message("Path", source))
@@ -713,9 +778,9 @@ class WorkspaceTools:
         }
 
     def preview_delete_path(self, path: str, recursive: bool = True) -> dict[str, Any]:
-        target = self._resolve_path(path)
-        if target == self.root:
-            raise WorkspaceError("Refusing to delete the workspace root")
+        target = self._resolve_path(path, access="write")
+        if target == self.root or target.parent == target:
+            raise WorkspaceError("Refusing to delete a workspace or filesystem root")
         if not target.exists():
             raise WorkspaceError(self._not_found_message("Path", target))
 
@@ -742,7 +807,7 @@ class WorkspaceTools:
         }
 
     def preview_make_directory(self, path: str) -> dict[str, Any]:
-        target = self._resolve_path(path)
+        target = self._resolve_path(path, access="write")
         if target.exists() and not target.is_dir():
             raise WorkspaceError(f"Expected a directory path but found a file: {self._rel(target)}")
         if not target.parent.exists():
@@ -905,7 +970,7 @@ class WorkspaceTools:
             )
             section = self._rollback_diff_section(
                 rel_path=rel_path,
-                current_path=self._resolve_path(rel_path),
+                current_path=self._resolve_path(rel_path, access="read"),
                 snapshot_path=snapshot_path,
             )
             diff_entries.append(
@@ -1090,7 +1155,7 @@ class WorkspaceTools:
             raise WorkspaceError("Unsupported rollback payload")
 
         target_paths = [
-            self._resolve_path(path)
+            self._resolve_path(path, access="write")
             for path in self._rollback_entry_paths(entry)
         ]
         undo_snapshot_token, undo_states = self._capture_restore_states(target_paths)
@@ -1174,7 +1239,7 @@ class WorkspaceTools:
         return self._apply_rollback_entry(entry, requested_tool="rollback_change")
 
     def write_file(self, path: str, content: str) -> dict[str, Any]:
-        file_path = self._resolve_path(path)
+        file_path = self._resolve_path(path, access="write")
         existed = file_path.exists()
         snapshot_token, restore_states = self._capture_restore_states([file_path])
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1203,8 +1268,8 @@ class WorkspaceTools:
 
     def rename_path(self, source_path: str, target_path: str) -> dict[str, Any]:
         preview = self.preview_rename_path(source_path, target_path)
-        source = self._resolve_path(source_path)
-        target = self._resolve_path(target_path)
+        source = self._resolve_path(source_path, access="write")
+        target = self._resolve_path(target_path, access="write")
         snapshot_token, restore_states = self._capture_restore_states([source, target])
         try:
             source.rename(target)
@@ -1229,8 +1294,8 @@ class WorkspaceTools:
 
     def copy_path(self, source_path: str, target_path: str) -> dict[str, Any]:
         preview = self.preview_copy_path(source_path, target_path)
-        source = self._resolve_path(source_path)
-        target = self._resolve_path(target_path)
+        source = self._resolve_path(source_path, access="read")
+        target = self._resolve_path(target_path, access="write")
         snapshot_token, restore_states = self._capture_restore_states([target])
         try:
             if source.is_dir():
@@ -1259,7 +1324,7 @@ class WorkspaceTools:
 
     def delete_path(self, path: str, recursive: bool = True) -> dict[str, Any]:
         preview = self.preview_delete_path(path, recursive=recursive)
-        target = self._resolve_path(path)
+        target = self._resolve_path(path, access="write")
         snapshot_token, restore_states = self._capture_restore_states([target])
         try:
             if target.is_dir():
@@ -1291,7 +1356,7 @@ class WorkspaceTools:
 
     def make_directory(self, path: str) -> dict[str, Any]:
         preview = self.preview_make_directory(path)
-        target = self._resolve_path(path)
+        target = self._resolve_path(path, access="write")
         existed = target.exists()
         snapshot_token, restore_states = self._capture_restore_states([target])
         try:
@@ -1327,7 +1392,7 @@ class WorkspaceTools:
         if not command or not command.strip():
             raise WorkspaceError("command is required")
 
-        workdir = self.root if not cwd else self._resolve_path(cwd)
+        workdir = self.root if not cwd else self._resolve_path(cwd, access="command")
         if not workdir.exists():
             raise WorkspaceError(self._not_found_message("Working directory", workdir))
         if not workdir.is_dir():

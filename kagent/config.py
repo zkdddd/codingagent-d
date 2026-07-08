@@ -10,10 +10,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 MODEL = os.getenv("MODEL", "gpt-5.4-mini")
+APP_LANGUAGE = os.getenv("APP_LANGUAGE", "zh").strip().lower()
 DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "kagent.db"))
 WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", str(BASE_DIR.parent))
 STATE_DIR = os.getenv("KAGENT_STATE_DIR", str(BASE_DIR / ".kagent_state"))
 ROLLBACK_ROOT = os.getenv("KAGENT_ROLLBACK_ROOT", str(Path(STATE_DIR) / "rollback"))
+FILESYSTEM_READ_SCOPE = os.getenv("KAGENT_FS_READ_SCOPE", "all").strip().lower()
+FILESYSTEM_WRITE_SCOPE = os.getenv("KAGENT_FS_WRITE_SCOPE", "workspace").strip().lower()
+FILESYSTEM_COMMAND_SCOPE = os.getenv("KAGENT_FS_COMMAND_SCOPE", "workspace").strip().lower()
+ALLOWED_WRITE_ROOTS = os.getenv("KAGENT_ALLOWED_WRITE_ROOTS", "")
+ALLOWED_COMMAND_ROOTS = os.getenv("KAGENT_ALLOWED_COMMAND_ROOTS", "")
 
 SYSTEM_PROMPT = """你是 kagent，一个友好、专业的 AI 助手。
 
