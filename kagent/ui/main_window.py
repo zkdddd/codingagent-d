@@ -2085,6 +2085,14 @@ QListWidget::item:selected {{
 
     def _apply_tool_event(self, trace: ToolTraceCard, event: dict[str, Any]):
         event_type = str(event.get("type", "")).strip()
+        if event_type == "agent_start":
+            trace.set_state("Analyzing", kind="active")
+            return
+        if event_type == "agent_status":
+            status_text = str(event.get("status") or "").strip()
+            if status_text:
+                trace.set_state(status_text, kind=str(event.get("kind") or "active"))
+            return
         call_id = str(event.get("call_id") or event.get("id") or "")
         if not call_id:
             return
