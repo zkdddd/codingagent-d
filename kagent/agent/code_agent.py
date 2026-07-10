@@ -34,6 +34,7 @@ from .task_plan import (
     PlanStep,
     build_task_plan,
     plan_for_model,
+    plan_progress_snapshot,
     plan_summary_text,
     plan_to_dicts,
     set_plan_step,
@@ -447,6 +448,7 @@ class CodeAgent:
             "changed_paths": sorted(state.changed_paths or []),
             "last_validation_summary": state.last_validation_summary,
             "plan": plan_to_dicts(state.plan or []),
+            "plan_snapshot": plan_progress_snapshot(state.plan or []),
             "focused_validation_commands": state.focused_validation_commands or [],
             "tool_call_history": state.tool_call_history or [],
         }

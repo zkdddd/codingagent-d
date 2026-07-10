@@ -58,3 +58,88 @@ def test_find_symbols_filters_kind(tmp_path):
 
     assert len(matches) == 1
     assert matches[0]["kind"] == "class"
+
+
+def test_build_symbol_index_extracts_javascript_and_typescript_symbols(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.ts").write_text(
+        "\n".join(
+            [
+                "import { createRoot } from 'react-dom/client';",
+                "export interface AppProps { title: string }",
+                "export type Route = string;",
+                "export class AppShell {}",
+                "export function renderApp() {}",
+                "export const loadData = async () => true;",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    symbols = build_symbol_index(tmp_path)
+    by_name = {(symbol.name, symbol.kind): symbol for symbol in symbols}
+
+    assert by_name[("client", "import")].module == "react-dom/client"
+    assert by_name[("AppProps", "interface")].line == 2
+    assert by_name[("Route", "type")].line == 3
+    assert by_name[("AppShell", "class")].line == 4
+    assert by_name[("renderApp", "function")].line == 5
+    assert by_name[("loadData", "function")].line == 6
+
+
+def test_build_symbol_index_extracts_go_rust_and_java_symbols(tmp_path):
+    go_dir = tmp_path / "goapp"
+    rust_dir = tmp_path / "rustapp" / "src"
+    java_dir = tmp_path / "javaapp"
+    go_dir.mkdir()
+    rust_dir.mkdir(parents=True)
+    java_dir.mkdir()
+    (go_dir / "service.go").write_text(
+        "\n".join(
+            [
+                'import "fmt"',
+                "type Server struct {}",
+                "func NewServer() *Server { return nil }",
+                "func (s *Server) Start() {}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (rust_dir / "lib.rs").write_text(
+        "\n".join(
+            [
+                "use crate::config::Config;",
+                "pub struct Runner;",
+                "pub enum Mode { Fast }",
+                "pub fn run() {}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (java_dir / "Service.java").write_text(
+        "\n".join(
+            [
+                "import java.util.List;",
+                "public class Service {",
+                "  public void start() {}",
+                "}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    symbols = build_symbol_index(tmp_path)
+    by_name = {(symbol.name, symbol.kind): symbol for symbol in symbols}
+
+    assert by_name[("fmt", "import")].module == "fmt"
+    assert by_name[("Server", "struct")].line == 2
+    assert by_name[("NewServer", "function")].line == 3
+    assert by_name[("Start", "method")].line == 4
+    assert by_name[("Config", "import")].module == "crate::config::Config"
+    assert by_name[("Runner", "struct")].line == 2
+    assert by_name[("Mode", "enum")].line == 3
+    assert by_name[("run", "function")].line == 4
+    assert by_name[("List", "import")].module == "java.util.List"
+    assert by_name[("Service", "class")].line == 2
+    assert by_name[("start", "method")].line == 3

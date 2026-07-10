@@ -5,6 +5,7 @@ from typing import Any
 
 from .. import db
 from .project_map import build_project_map, summarize_project_map
+from .validation_learning import learned_validation_commands_from_runs
 
 
 def build_project_memory(root: str | Path) -> dict[str, Any]:
@@ -82,6 +83,7 @@ def format_project_memory_for_prompt(memory: dict[str, Any] | None) -> str:
 
 def _detect_validation_commands(root: Path) -> list[dict[str, str]]:
     commands: list[dict[str, str]] = []
+    commands.extend(learned_validation_commands_from_runs())
     if (root / "run-tests.bat").exists():
         commands.append(
             {

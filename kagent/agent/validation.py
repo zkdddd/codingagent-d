@@ -9,6 +9,7 @@ from typing import Any
 from .failure_diagnostics import diagnostics_summary, extract_failure_diagnostics
 from .impact_analysis import related_test_commands_for_changes
 from .repair_strategy import repair_strategy_prompt
+from .validation_learning import learned_validation_commands_from_runs
 
 
 MAX_VALIDATION_PLAN_COMMANDS = 3
@@ -58,6 +59,9 @@ def build_validation_plan(
         ]
     else:
         commands = []
+
+    if commands and project_type not in {"docs", "generic"}:
+        commands = _merge_learned_validation_commands(commands, max_commands=max_commands)
 
     if commands:
         summary = (
@@ -398,6 +402,29 @@ def _command_lines(commands: list[Any]) -> list[str]:
             continue
         command_lines.append(f"{idx}. {command_info.get('label')}: `{command_info.get('command')}`")
     return command_lines
+
+
+def _merge_learned_validation_commands(
+    commands: list[dict[str, Any]], *, max_commands: int
+) -> list[dict[str, Any]]:
+    learned = learned_validation_commands_from_runs(limit=max_commands)
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for command_info in [*learned, *commands]:
+        if not isinstance(command_info, dict):
+            continue
+        command = str(command_info.get("command") or "").strip()
+        if not command:
+            continue
+        cwd = str(command_info.get("cwd") or ".")
+        key = (command, cwd)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(command_info)
+        if len(merged) >= max_commands:
+            break
+    return merged
 
 
 def _focused_command_for_diagnostic(item: dict[str, Any]) -> str | None:
