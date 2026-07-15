@@ -5,6 +5,12 @@
 - Run Debug now includes a `Resume Task` action.
 - The action builds resume context from the selected run log and submits it to the Agent as the next turn.
 - The chat header now includes a resume-history picker for recent failed, stopped, unverified, or validation-failed runs.
+- Resume-history preview now includes related rollback diff context when available.
+- Resume-history recovery now lets users edit or copy the generated resume prompt before submission.
+- Diff, Resume, and History header actions now include clearer role tooltips so they do not feel like duplicate entry points.
+- The chat header now uses one `Activity` entry that opens a shared panel for current diff review, resumable runs, and rollback history.
+- The Activity panel now shows status summaries for current changed paths, resumable runs, and rollback records before opening details.
+- The Activity panel now lists the most recent resumable runs directly under the resume summary.
 - Windows launch scripts prefer the project `.venv` instead of a hardcoded local Python path.
 - UI option labels, dialogs, tool cards, rollback actions, diff review, and task resume text now follow the selected app language.
 - Each chat session can now target its own workspace/project directory from the UI.
@@ -63,7 +69,13 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - Agent 支持最终回复可信度接入，最终回答会根据自检结果明确提示未验证变更、验证失败、失败工具或循环风险。
 - UI 支持运行调试入口，可以在 Agent 执行日志卡片中查看本次运行日志摘要、自检结果和事件时间线。
 - UI 支持恢复运行历史选择器，可以列出最近需要关注的运行并预览恢复上下文后继续任务。
+- UI 支持恢复前差异联动，恢复历史预览会在可用时展示相关 rollback diff。
+- UI 支持恢复提示编辑和复制，提交恢复任务前可以调整最终发给 Agent 的提示。
 - UI 支持当前会话 Diff Review，可以直接查看本轮 active rollback 记录汇总出的文件列表和 diff 预览。
+- UI 对 Diff、Resume、History 三个入口增加职责提示：Diff 用于审查当前改动，Resume 用于继续历史任务，History 用于逐条查看和恢复 rollback 版本。
+- UI 已把 Diff、Resume、History 收敛到统一 Activity 面板入口，顶部不再展示三个并列恢复类按钮。
+- UI 的 Activity 面板会直接展示当前差异文件数、需要恢复的运行数和 rollback 记录数，让入口从按钮集合升级为状态面板。
+- UI 的 Activity 面板会在恢复任务区直接列出最近需要恢复的运行，方便先判断是哪次任务需要继续。
 - Agent 会压缩喂给模型的工具输出，避免大文件、大目录和长命令输出撑爆上下文。
 - Agent 支持长期项目记忆，会按工作区保存项目结构摘要、入口文件、配置文件、常用验证命令和稳定偏好，下次运行自动注入上下文。
 - Agent 会给工具失败结果附带恢复建议，例如路径不存在、参数错误、缺依赖、命令超时、代码错误等。

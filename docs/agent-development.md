@@ -1,5 +1,139 @@
 # Agent Development Log
 
+## 2026-07-15: Activity Recent Resume Runs
+
+### What changed
+
+- Activity panel now shows the most recent resumable runs under the resume summary.
+- The list reuses existing resume-history candidate filtering and item labels.
+- Empty state text is shown when no recent run needs resume attention.
+
+### Why
+
+The Activity panel already showed how many runs need attention, but users still had to open another dialog to know which runs they were. Showing the recent candidates inline makes the panel useful as a quick recovery dashboard.
+
+### Verification
+
+```text
+22 targeted tests passed
+```
+
+Full validation:
+```text
+152 passed
+```
+
+## 2026-07-15: Activity Status Summaries
+
+### What changed
+
+- Activity panel now computes and displays the current rollbackable changed-path count.
+- Activity panel now shows how many previous runs need resume attention.
+- Activity panel now shows how many rollback records are available for the current session.
+- Summary failures degrade to an unavailable state instead of blocking the panel.
+
+### Why
+
+The Activity entry was unified, but it still behaved mostly like a menu. This step turns it into a lightweight status panel so users can understand the coding session state before opening deeper detail views.
+
+### Verification
+
+```text
+21 targeted tests passed
+```
+
+Full validation:
+```text
+151 passed
+```
+
+## 2026-07-15: Unified Activity Panel Entry
+
+### What changed
+
+- Replaced the separate header `Diff`, `Resume`, and `History` buttons with a single `Activity` entry.
+- Added an Activity panel that groups current diff review, resumable run history, and rollback history actions.
+- Kept the existing diff, resume, and rollback backends instead of creating duplicate data sources.
+- Language switching now updates the Activity entry label and tooltip.
+
+### Why
+
+The previous step clarified the roles, but the header still looked like three overlapping recovery buttons. This step makes the product structure match the intent: one activity/recovery panel, three distinct actions inside it.
+
+### Verification
+
+```text
+20 targeted tests passed
+```
+
+Full validation:
+```text
+150 passed
+```
+
+## 2026-07-15: Activity Entry Role Clarification
+
+### What changed
+
+- Added clearer tooltips for the header `Diff`, `Resume`, and `History` actions.
+- Clarified that `Diff` reviews the current session's rollbackable change summary.
+- Clarified that `Resume` continues a previous run from run logs with an editable prompt.
+- Clarified that `History` inspects individual rollback records and can restore selected versions.
+
+### Why
+
+These three actions reuse related recovery data, but they serve different moments in the coding workflow. The UI now explains the boundary directly instead of making the user guess whether the entries are duplicates.
+
+### Verification
+
+```text
+20 targeted tests passed
+```
+
+Full validation:
+```text
+150 passed
+```
+
+## 2026-07-15: Editable Resume Prompt
+
+### What changed
+
+- Resume-history picker now shows the final resume prompt in an editable text box.
+- `Resume selected run` submits the edited prompt instead of always sending the generated default prompt.
+- Added a `Copy prompt` action so users can copy the generated or edited resume prompt before submission.
+
+### Verification
+
+```text
+22 targeted tests passed
+```
+
+Full validation:
+```text
+149 passed
+```
+
+## 2026-07-15: Resume Preview Diff Context
+
+### What changed
+
+- Resume-history preview now tries to include related rollback diff context.
+- The picker first previews rollback states for the resumed run's changed paths.
+- If changed-path preview is unavailable, it falls back to the active session rollback preview.
+- Missing diff context does not block resume; the resume prompt remains available.
+
+### Verification
+
+```text
+25 targeted tests passed
+```
+
+Full validation:
+```text
+148 passed
+```
+
 ## 2026-07-14: Resume Run History Picker Merge
 
 ### What changed

@@ -9,6 +9,7 @@ from typing import Any
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -109,6 +110,24 @@ UI_TEXT = {
         "history": "历史",
         "diff_review": "差异",
         "resume_history": "恢复历史",
+        "diff_review_tip": "查看当前会话可回滚变更汇总，用于快速审查本轮代码改动。",
+        "resume_history_tip": "从历史 run log 中选择需要继续的任务，并可编辑恢复提示后提交。",
+        "rollback_history_tip": "查看逐条 rollback 记录，预览版本差异或恢复指定版本。",
+        "activity": "活动",
+        "activity_title": "活动面板",
+        "activity_tip": "集中查看当前差异、恢复历史任务和 rollback 历史。",
+        "activity_intro": "把代码审查、任务恢复和版本回滚入口集中在一个地方，避免顶部出现重复按钮。",
+        "activity_open_diff": "查看当前差异",
+        "activity_open_resume": "恢复历史任务",
+        "activity_open_history": "打开回滚历史",
+        "activity_status_unavailable": "状态不可用",
+        "activity_diff_clean": "当前没有可回滚改动",
+        "activity_diff_count": "{count} 个当前改动文件",
+        "activity_resume_clean": "没有需要恢复的运行",
+        "activity_resume_count": "{count} 个运行需要关注",
+        "activity_resume_recent_empty": "最近没有需要恢复的运行。",
+        "activity_rollback_clean": "没有 rollback 历史",
+        "activity_rollback_count": "{count} 条 rollback 记录",
         "workspace": "工作区",
         "switch_workspace": "切换工作区",
         "select_workspace": "选择工作区",
@@ -193,6 +212,9 @@ UI_TEXT = {
         "resume_history_title": "恢复运行历史",
         "resume_selected": "恢复选中运行",
         "resume_preview": "恢复预览",
+        "resume_related_diff": "相关差异",
+        "resume_prompt_editor": "恢复提示（可编辑）",
+        "copy_resume_prompt": "复制提示",
         "no_resume_history": "暂无需要恢复的运行记录。",
         "resume_prompt_intro": "根据下面的恢复上下文继续上一次 Agent 任务。",
         "resume_prompt_no_restart": "除非上下文明显不可用，否则不要从头开始。",
@@ -319,6 +341,24 @@ UI_TEXT = {
         "history": "History",
         "diff_review": "Diff",
         "resume_history": "Resume",
+        "diff_review_tip": "Review the current session's rollbackable change summary before trusting code edits.",
+        "resume_history_tip": "Pick a previous run that needs follow-up, edit the resume prompt, then continue it.",
+        "rollback_history_tip": "Inspect individual rollback records, preview version diffs, or restore a selected version.",
+        "activity": "Activity",
+        "activity_title": "Activity Panel",
+        "activity_tip": "Open current diffs, resumable runs, and rollback history from one place.",
+        "activity_intro": "Review, resume, and rollback actions live together here so the header does not duplicate recovery entry points.",
+        "activity_open_diff": "Review current diff",
+        "activity_open_resume": "Resume previous run",
+        "activity_open_history": "Open rollback history",
+        "activity_status_unavailable": "Status unavailable",
+        "activity_diff_clean": "No rollbackable changes",
+        "activity_diff_count": "{count} changed path(s)",
+        "activity_resume_clean": "No runs need resume",
+        "activity_resume_count": "{count} run(s) need attention",
+        "activity_resume_recent_empty": "No recent runs need resume.",
+        "activity_rollback_clean": "No rollback history",
+        "activity_rollback_count": "{count} rollback record(s)",
         "workspace": "Workspace",
         "switch_workspace": "Switch workspace",
         "select_workspace": "Select workspace",
@@ -403,6 +443,9 @@ UI_TEXT = {
         "resume_history_title": "Resume Run History",
         "resume_selected": "Resume selected run",
         "resume_preview": "Resume Preview",
+        "resume_related_diff": "Related Diff",
+        "resume_prompt_editor": "Resume prompt (editable)",
+        "copy_resume_prompt": "Copy prompt",
         "no_resume_history": "No runs need resume.",
         "resume_prompt_intro": "Continue the previous Agent task using this resume context.",
         "resume_prompt_no_restart": "Do not restart from scratch unless the context is clearly unusable.",
@@ -955,13 +998,50 @@ def _resume_history_item_label(row: dict[str, Any]) -> str:
     return f"{started} | {status}/{health} | {detail} | {run_id[:10]}"
 
 
-def _resume_history_markdown(context: dict[str, Any]) -> str:
-    return "\n\n".join(
-        [
-            f"### {_t('resume_preview')}",
-            f"```text\n{format_resume_context(context)}\n```",
-        ]
-    )
+def _resume_history_markdown(
+    context: dict[str, Any], diff_preview: dict[str, Any] | None = None
+) -> str:
+    sections = [
+        f"### {_t('resume_preview')}",
+        f"```text\n{format_resume_context(context)}\n```",
+    ]
+    if isinstance(diff_preview, dict):
+        sections.extend(
+            [
+                f"### {_t('resume_related_diff')}",
+                _diff_review_markdown(diff_preview),
+            ]
+        )
+    return "\n\n".join(sections)
+
+
+def _activity_status_summary(
+    kind: str,
+    *,
+    count: int | None = None,
+    unavailable: bool = False,
+) -> str:
+    if unavailable or count is None:
+        return _t("activity_status_unavailable")
+    safe_count = max(0, int(count))
+    if kind == "diff":
+        return _tf("activity_diff_count", count=safe_count) if safe_count else _t("activity_diff_clean")
+    if kind == "resume":
+        return _tf("activity_resume_count", count=safe_count) if safe_count else _t("activity_resume_clean")
+    if kind == "rollback":
+        return (
+            _tf("activity_rollback_count", count=safe_count)
+            if safe_count
+            else _t("activity_rollback_clean")
+        )
+    return _t("activity_status_unavailable")
+
+
+def _activity_recent_resume_lines(rows: list[dict[str, Any]], limit: int = 3) -> list[str]:
+    selected = rows[: max(0, int(limit))]
+    if not selected:
+        return [_t("activity_resume_recent_empty")]
+    return [_resume_history_item_label(row) for row in selected]
 
 
 def _session_title_for_workspace(path: str | Path) -> str:
@@ -2593,27 +2673,13 @@ QListWidget::item:selected {{
         h.addLayout(title_stack)
         h.addStretch(1)
 
-        self.diff_review_btn = QPushButton(_t("diff_review"))
-        self.diff_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.diff_review_btn.clicked.connect(self._show_current_diff_review)
-        self.diff_review_btn.setStyleSheet(_button_style("secondary", compact=True))
-        h.addWidget(self.diff_review_btn)
+        self.activity_btn = QPushButton(_t("activity"))
+        self.activity_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.activity_btn.setToolTip(_t("activity_tip"))
+        self.activity_btn.clicked.connect(self._show_activity_panel)
+        self.activity_btn.setStyleSheet(_button_style("secondary", compact=True))
+        h.addWidget(self.activity_btn)
 
-        self.resume_history_btn = QPushButton(_t("resume_history"))
-        self.resume_history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.resume_history_btn.clicked.connect(self._show_resume_history_picker)
-        self.resume_history_btn.setStyleSheet(
-            "background: rgba(255, 255, 255, 0.025); color: #94A3B8; "
-            f"border: 1px solid {C_BORDER}; border-radius: 12px; "
-            "padding: 7px 11px; font-size: 12px; font-weight: 700;"
-        )
-        h.addWidget(self.resume_history_btn)
-
-        self.rollback_history_btn = QPushButton(_t("history"))
-        self.rollback_history_btn.setCheckable(True)
-        self.rollback_history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.rollback_history_btn.clicked.connect(self._toggle_rollback_history_panel)
-        h.addWidget(self.rollback_history_btn)
         self._sync_rollback_history_button_style()
 
         self.chat_model_chip = _chip_label(MODEL, "#BAE6FD", "rgba(56, 189, 248, 0.12)", "rgba(56, 189, 248, 0.28)")
@@ -2784,10 +2850,10 @@ QListWidget::item:selected {{
             self.permission_menu_btn.setText(_t("permissions"))
         if hasattr(self, "rollback_history_btn"):
             self.rollback_history_btn.setText(_t("history"))
-        if hasattr(self, "diff_review_btn"):
-            self.diff_review_btn.setText(_t("diff_review"))
-        if hasattr(self, "resume_history_btn"):
-            self.resume_history_btn.setText(_t("resume_history"))
+            self.rollback_history_btn.setToolTip(_t("rollback_history_tip"))
+        if hasattr(self, "activity_btn"):
+            self.activity_btn.setText(_t("activity"))
+            self.activity_btn.setToolTip(_t("activity_tip"))
         if hasattr(self, "rollback_refresh_btn"):
             self.rollback_refresh_btn.setText(_t("refresh"))
         if hasattr(self, "rollback_history_title_label"):
@@ -3859,6 +3925,29 @@ QListWidget::item:selected {{
             dialog.accept()
         self._submit_text(prompt, clear_input=False)
 
+    def _resume_diff_preview_for_row(
+        self, row: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        session_id = str(row.get("session_id") or self.current_session or "").strip()
+        workspace_root = str(row.get("workspace_root") or self._current_workspace_root() or "").strip()
+        if not session_id or not workspace_root:
+            return None
+        try:
+            workspace = WorkspaceTools(root=workspace_root, session_id=session_id)
+            changed_paths = [
+                str(path)
+                for path in context.get("changed_paths", [])
+                if str(path).strip()
+            ]
+            if changed_paths:
+                preview = workspace.preview_rollback_paths(changed_paths)
+                if preview.get("available") or preview.get("paths"):
+                    return preview
+            preview = workspace.preview_rollback_session(limit=80)
+            return preview if preview.get("available") or preview.get("paths") else None
+        except Exception:
+            return None
+
     def _show_resume_history_picker(self) -> None:
         if self._is_busy():
             QMessageBox.information(self, "kagent", _t("busy_action_message"))
@@ -3902,18 +3991,37 @@ QListWidget::item:selected {{
             f"background: {C_BG_SURFACE}; color: {C_TEXT_MAIN}; "
             f"border: 1px solid {C_BORDER}; border-radius: 14px; padding: 10px;"
         )
-        body.addWidget(view, 2)
+        preview_stack = QVBoxLayout()
+        preview_stack.setSpacing(8)
+        preview_stack.addWidget(view, 2)
+
+        prompt_label = QLabel(_t("resume_prompt_editor"))
+        prompt_label.setStyleSheet(f"color: {C_TEXT_SUB}; font-size: 11px; font-weight: 700;")
+        preview_stack.addWidget(prompt_label)
+
+        prompt_editor = QTextEdit()
+        prompt_editor.setStyleSheet(_text_view_style())
+        prompt_editor.setMinimumHeight(120)
+        prompt_editor.setAcceptRichText(False)
+        preview_stack.addWidget(prompt_editor, 1)
+
+        body.addLayout(preview_stack, 2)
         layout.addLayout(body, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        copy_button = buttons.addButton(
+            _t("copy_resume_prompt"), QDialogButtonBox.ButtonRole.ActionRole
+        )
         resume_button = buttons.addButton(
             _t("resume_selected"), QDialogButtonBox.ButtonRole.ActionRole
         )
+        copy_button.setEnabled(False)
         resume_button.setEnabled(False)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
 
         contexts: dict[str, dict[str, Any]] = {}
+        rows_by_path = {str(row.get("path") or ""): row for row in candidates}
 
         def show_selected(item: QListWidgetItem | None) -> None:
             if item is None:
@@ -3928,10 +4036,17 @@ QListWidget::item:selected {{
                 if context is None:
                     context = build_resume_context(path)
                     contexts[path] = context
-                view.setHtml(render(_resume_history_markdown(context)))
+                diff_preview = self._resume_diff_preview_for_row(
+                    rows_by_path.get(path, {}), context
+                )
+                view.setHtml(render(_resume_history_markdown(context, diff_preview)))
+                prompt_editor.setPlainText(_resume_task_prompt(context))
+                copy_button.setEnabled(True)
                 resume_button.setEnabled(True)
             except Exception as exc:
                 view.setHtml(render(f"{_tf('build_resume_context_failed', error=exc)}"))
+                prompt_editor.clear()
+                copy_button.setEnabled(False)
                 resume_button.setEnabled(False)
 
         def resume_selected() -> None:
@@ -3942,9 +4057,16 @@ QListWidget::item:selected {{
             context = contexts.get(path)
             if context is None:
                 context = build_resume_context(path)
+            prompt = prompt_editor.toPlainText().strip() or _resume_task_prompt(context)
             dialog.accept()
-            self._submit_text(_resume_task_prompt(context), clear_input=False)
+            self._submit_text(prompt, clear_input=False)
 
+        def copy_prompt() -> None:
+            text = prompt_editor.toPlainText().strip()
+            if text:
+                QApplication.clipboard().setText(text)
+
+        copy_button.clicked.connect(copy_prompt)
         resume_button.clicked.connect(resume_selected)
         run_list.currentItemChanged.connect(lambda current, _previous: show_selected(current))
 
@@ -3957,6 +4079,135 @@ QListWidget::item:selected {{
             run_list.setCurrentRow(0)
         else:
             view.setHtml(render(f"### {_t('resume_history_title')}\n\n{_t('no_resume_history')}"))
+            prompt_editor.clear()
+
+        dialog.exec()
+
+    def _show_activity_panel(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(_t("activity_title"))
+        dialog.resize(520, 360)
+        dialog.setStyleSheet(_dialog_style())
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        title = QLabel(_t("activity_title"))
+        title.setStyleSheet(f"color: {C_TEXT_MAIN}; font-size: 14px; font-weight: 800;")
+        layout.addWidget(title)
+
+        intro = QLabel(_t("activity_intro"))
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {C_TEXT_SUB}; font-size: 12px;")
+        layout.addWidget(intro)
+
+        workspace = self._workspace_tools_for_session()
+        diff_count: int | None = None
+        rollback_count: int | None = None
+        if workspace is not None:
+            try:
+                diff_preview = workspace.preview_rollback_session(limit=80)
+                diff_count = int(diff_preview.get("path_count") or len(diff_preview.get("paths") or []))
+            except Exception:
+                diff_count = None
+            try:
+                rollback_history = workspace.list_rollback_history(limit=40, include_inactive=True)
+                rollback_count = int(
+                    rollback_history.get("count")
+                    if rollback_history.get("count") is not None
+                    else len(rollback_history.get("entries") or [])
+                )
+            except Exception:
+                rollback_count = None
+
+        resume_candidates: list[dict[str, Any]] | None = None
+        resume_count: int | None = None
+        try:
+            resume_candidates = _resume_history_candidates(
+                list_run_history(limit=80),
+                workspace_root=self._current_workspace_root(),
+            )
+            resume_count = len(resume_candidates)
+        except Exception:
+            resume_candidates = None
+            resume_count = None
+
+        def add_activity_row(
+            label_key: str,
+            summary: str,
+            tip_key: str,
+            action: Any,
+            detail_lines: list[str] | None = None,
+        ) -> None:
+            row = QFrame()
+            row.setStyleSheet(
+                f"background: {C_BG_SURFACE}; border: 1px solid {C_BORDER}; border-radius: 14px;"
+            )
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(14, 12, 14, 12)
+            row_layout.setSpacing(12)
+
+            text_stack = QVBoxLayout()
+            text_stack.setContentsMargins(0, 0, 0, 0)
+            text_stack.setSpacing(4)
+
+            label = QLabel(_t(label_key))
+            label.setStyleSheet(f"color: {C_TEXT_MAIN}; font-size: 12px; font-weight: 800;")
+            text_stack.addWidget(label)
+
+            status = QLabel(summary)
+            status.setStyleSheet(f"color: {C_ACCENT}; font-size: 11px; font-weight: 800;")
+            text_stack.addWidget(status)
+
+            description = QLabel(_t(tip_key))
+            description.setWordWrap(True)
+            description.setStyleSheet(f"color: {C_TEXT_SUB}; font-size: 11px;")
+            text_stack.addWidget(description)
+
+            for line in detail_lines or []:
+                detail = QLabel(line)
+                detail.setWordWrap(True)
+                detail.setStyleSheet(
+                    f"color: {C_TEXT_PLACEHOLDER}; font-size: 10.5px; padding-left: 6px;"
+                )
+                text_stack.addWidget(detail)
+
+            row_layout.addLayout(text_stack, 1)
+
+            button = QPushButton(_t("execute"))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setStyleSheet(_button_style("secondary", compact=True))
+            button.clicked.connect(lambda _checked=False: (dialog.accept(), action()))
+            row_layout.addWidget(button)
+
+            layout.addWidget(row)
+
+        add_activity_row(
+            "activity_open_diff",
+            _activity_status_summary("diff", count=diff_count, unavailable=workspace is None),
+            "diff_review_tip",
+            self._show_current_diff_review,
+        )
+        add_activity_row(
+            "activity_open_resume",
+            _activity_status_summary("resume", count=resume_count),
+            "resume_history_tip",
+            self._show_resume_history_picker,
+            _activity_recent_resume_lines(resume_candidates or []) if resume_candidates is not None else None,
+        )
+        add_activity_row(
+            "activity_open_history",
+            _activity_status_summary("rollback", count=rollback_count, unavailable=workspace is None),
+            "rollback_history_tip",
+            lambda: self._toggle_rollback_history_panel(True),
+        )
+
+        layout.addStretch(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
 
         dialog.exec()
 

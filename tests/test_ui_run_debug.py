@@ -1,5 +1,7 @@
 from kagent.agent.run_log import RunLogger
 from kagent.ui.main_window import (
+    _activity_recent_resume_lines,
+    _activity_status_summary,
     _diff_review_markdown,
     _resume_history_candidates,
     _resume_history_item_label,
@@ -152,6 +154,104 @@ def test_resume_history_item_label_and_markdown(monkeypatch):
     assert "abcdef1234" in label
     assert "Resume Preview" in markdown
     assert "fix_validation_failure" in markdown
+
+
+def test_resume_history_markdown_can_include_related_diff(monkeypatch):
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+    markdown = _resume_history_markdown(
+        {
+            "run_id": "run-1",
+            "status": "completed",
+            "health": "fail",
+            "priority": "run_validation",
+            "resume_prompt": "Validate changed files.",
+        },
+        {
+            "available": True,
+            "summary": "Previewing rollback for 1 path",
+            "paths": ["kagent/app.py"],
+            "preview": "diff --git a/kagent/app.py b/kagent/app.py\n@@ -1 +1 @@\n-old\n+new\n",
+        },
+    )
+
+    assert "Resume Preview" in markdown
+    assert "Related Diff" in markdown
+    assert "`kagent/app.py`" in markdown
+    assert "+new" in markdown
+
+
+def test_resume_prompt_editor_labels_follow_language(monkeypatch):
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+    assert _t("resume_prompt_editor") == "Resume prompt (editable)"
+    assert _t("copy_resume_prompt") == "Copy prompt"
+
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "zh")
+    assert _t("resume_prompt_editor")
+    assert _t("copy_resume_prompt")
+
+
+def test_activity_entry_tooltips_distinguish_diff_resume_and_history(monkeypatch):
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+
+    assert _t("activity") == "Activity"
+    assert _t("activity_title") == "Activity Panel"
+    assert "one place" in _t("activity_tip")
+    assert "together" in _t("activity_intro")
+    assert "current session" in _t("diff_review_tip")
+    assert "previous run" in _t("resume_history_tip")
+    assert "rollback records" in _t("rollback_history_tip")
+
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "zh")
+    assert _t("activity")
+    assert _t("activity_title")
+    assert _t("activity_tip")
+    assert _t("activity_intro")
+    assert _t("diff_review_tip")
+    assert _t("resume_history_tip")
+    assert _t("rollback_history_tip")
+
+
+def test_activity_status_summary_handles_counts_and_empty_states(monkeypatch):
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+
+    assert _activity_status_summary("diff", count=0) == "No rollbackable changes"
+    assert _activity_status_summary("resume", count=2) == "2 run(s) need attention"
+    assert _activity_status_summary("rollback", count=3) == "3 rollback record(s)"
+    assert _activity_status_summary("diff", unavailable=True) == "Status unavailable"
+
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "zh")
+    assert _activity_status_summary("diff", count=0)
+    assert _activity_status_summary("resume", count=2)
+    assert _activity_status_summary("rollback", count=3)
+
+
+def test_activity_recent_resume_lines_show_recent_problem_runs(monkeypatch):
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+    rows = [
+        {
+            "run_id": "run-1111111111",
+            "started_at": "2026-07-15T10:00:00Z",
+            "status": "completed",
+            "health": "fail",
+            "validation_failed": True,
+            "failed_tool_count": 1,
+        },
+        {
+            "run_id": "run-2222222222",
+            "started_at": "2026-07-15T09:00:00Z",
+            "status": "stopped",
+            "health": "warn",
+            "failed_tool_count": 0,
+        },
+    ]
+
+    lines = _activity_recent_resume_lines(rows, limit=1)
+
+    assert len(lines) == 1
+    assert "validation_failed" in lines[0]
+    assert "failed_tools:1" in lines[0]
+    assert "run-111111" in lines[0]
+    assert _activity_recent_resume_lines([]) == ["No recent runs need resume."]
 
 
 def test_ui_markdown_uses_english_language(tmp_path, monkeypatch):
