@@ -835,6 +835,7 @@ class CodeAgent:
             "command_count": int(plan.get("command_count") or 0),
             "commands": plan.get("commands") if isinstance(plan.get("commands"), list) else [],
             "changed_paths": plan.get("changed_paths") if isinstance(plan.get("changed_paths"), list) else [],
+            "selection": plan.get("selection") if isinstance(plan.get("selection"), dict) else {},
         }
         self._emit_event(
             on_event,

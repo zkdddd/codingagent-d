@@ -2,6 +2,7 @@ from kagent.agent.impact_analysis import (
     analyze_reference_impact,
     related_test_commands_for_changes,
     related_tests_for_changes,
+    related_tests_for_changes_with_reasons,
 )
 
 
@@ -13,6 +14,13 @@ def test_related_tests_for_top_level_module(tmp_path):
     related = related_tests_for_changes({"kagent/context.py"}, workspace_root=tmp_path)
 
     assert related == ["tests/test_context.py"]
+
+    related_with_reasons = related_tests_for_changes_with_reasons(
+        {"kagent/context.py"}, workspace_root=tmp_path
+    )
+    assert related_with_reasons == [
+        {"path": "tests/test_context.py", "reason": "matches changed source kagent/context.py"}
+    ]
 
 
 def test_related_tests_for_nested_module(tmp_path):
@@ -50,6 +58,7 @@ def test_related_test_commands_use_pytest(tmp_path):
     assert commands[0]["label"] == "Related tests"
     assert "pytest" in commands[0]["command"]
     assert "tests/test_context.py" in commands[0]["command"]
+    assert commands[0]["related_reason"] == "matches changed source kagent/context.py"
 
 
 def test_reference_impact_finds_tests_importing_changed_module(tmp_path):

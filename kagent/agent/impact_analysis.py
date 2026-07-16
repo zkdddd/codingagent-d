@@ -19,54 +19,76 @@ def related_test_commands_for_changes(
     cwd: str = ".",
     max_commands: int = MAX_RELATED_TEST_COMMANDS,
 ) -> list[dict[str, Any]]:
-    tests = related_tests_for_changes(changed_paths, workspace_root=workspace_root)
+    tests = related_tests_for_changes_with_reasons(changed_paths, workspace_root=workspace_root)
     commands: list[dict[str, Any]] = []
-    for test_path in tests[:max_commands]:
+    for item in tests[:max_commands]:
+        test_path = item["path"]
+        reason = item["reason"]
         commands.append(
             {
                 "label": "Related tests",
-                "reason": "Run tests inferred from the changed file path before the full suite.",
+                "reason": f"Run {test_path} before the full suite because it {reason}.",
                 "command": subprocess.list2cmdline([sys.executable, "-m", "pytest", "-q", test_path]),
                 "cwd": cwd,
                 "timeout_ms": 180000,
                 "related_test": test_path,
+                "related_reason": reason,
             }
         )
     return commands
 
 
 def related_tests_for_changes(changed_paths: set[str], *, workspace_root: Path) -> list[str]:
+    return [item["path"] for item in related_tests_for_changes_with_reasons(changed_paths, workspace_root=workspace_root)]
+
+
+def related_tests_for_changes_with_reasons(
+    changed_paths: set[str], *, workspace_root: Path
+) -> list[dict[str, str]]:
     project_map = build_project_map(workspace_root)
     test_set = set(project_map.test_files)
     related_by_source = project_map.source_to_tests
-    candidates: list[str] = []
+    candidates: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw_path in sorted(path for path in changed_paths if path):
         normalized = Path(str(raw_path).replace("\\", "/")).as_posix()
-        direct_tests = [normalized] if normalized in test_set else []
+        direct_tests = [{"path": normalized, "reason": "is a changed test file"}] if normalized in test_set else []
         mapped_tests = related_by_source.get(normalized)
         if mapped_tests is None:
             mapped_tests = related_tests_for_source(normalized, list(test_set))
-        for candidate in [*direct_tests, *mapped_tests]:
-            if candidate not in test_set:
+        mapped_items = [
+            {"path": test_path, "reason": f"matches changed source {normalized}"}
+            for test_path in mapped_tests
+        ]
+        for candidate in [*direct_tests, *mapped_items]:
+            test_path = candidate["path"]
+            if test_path not in test_set:
                 continue
-            if candidate in seen:
+            if test_path in seen:
                 continue
-            seen.add(candidate)
+            seen.add(test_path)
             candidates.append(candidate)
-        for candidate in reference_related_tests(normalized, workspace_root=workspace_root):
-            if candidate not in test_set:
+        for candidate in reference_related_tests_with_reasons(normalized, workspace_root=workspace_root):
+            test_path = candidate["path"]
+            if test_path not in test_set:
                 continue
-            if candidate in seen:
+            if test_path in seen:
                 continue
-            seen.add(candidate)
+            seen.add(test_path)
             candidates.append(candidate)
     return candidates
 
 
 def reference_related_tests(changed_path: str, *, workspace_root: Path) -> list[str]:
+    return [item["path"] for item in reference_related_tests_with_reasons(changed_path, workspace_root=workspace_root)]
+
+
+def reference_related_tests_with_reasons(changed_path: str, *, workspace_root: Path) -> list[dict[str, str]]:
     impact = analyze_reference_impact(changed_path, workspace_root=workspace_root)
-    return [item["path"] for item in impact["related_tests"]]
+    return [
+        {"path": item["path"], "reason": item.get("reason") or "references changed module or symbol"}
+        for item in impact["related_tests"]
+    ]
 
 
 def analyze_reference_impact(changed_path: str, *, workspace_root: Path) -> dict[str, Any]:

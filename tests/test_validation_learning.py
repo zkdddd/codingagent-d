@@ -67,7 +67,7 @@ def test_learned_validation_commands_ignore_unplanned_shell_commands(tmp_path, m
     assert learned_validation_commands_from_runs() == []
 
 
-def test_validation_plan_prioritizes_learned_commands(tmp_path, monkeypatch):
+def test_validation_plan_keeps_learned_commands_after_fast_checks(tmp_path, monkeypatch):
     monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
     monkeypatch.setattr("kagent.agent.validation_learning.STATE_DIR", str(tmp_path))
     (tmp_path / "requirements.txt").write_text("pytest\n", encoding="utf-8")
@@ -101,5 +101,6 @@ def test_validation_plan_prioritizes_learned_commands(tmp_path, monkeypatch):
         workspace=StubWorkspace(tmp_path),
     )
 
-    assert plan["commands"][0]["command"] == "run-tests.bat"
-    assert plan["commands"][0]["learned"] is True
+    assert plan["commands"][0]["label"] == "Python syntax check"
+    assert plan["commands"][1]["command"] == "run-tests.bat"
+    assert plan["commands"][1]["learned"] is True

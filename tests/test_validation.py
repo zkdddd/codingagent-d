@@ -45,8 +45,56 @@ def test_python_changed_file_gets_py_compile_plan(tmp_path):
     assert "py_compile" in plan["commands"][0]["command"]
     assert plan["commands"][1]["label"] == "Related tests"
     assert "tests/test_module.py" in plan["commands"][1]["command"]
+    assert plan["commands"][1]["related_reason"] == "matches changed source kagent/module.py"
     assert plan["commands"][2]["label"] == "Pytest suite"
     assert "pytest -q" in plan["commands"][2]["command"]
+    assert plan["selection"]["strategy"].startswith("Run fast syntax checks first")
+    assert [item["tier"] for item in plan["selection"]["tiers"]] == [
+        "syntax",
+        "related_tests",
+        "full_validation",
+    ]
+
+
+def test_validation_plan_keeps_related_tests_before_learned_commands(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    package = tmp_path / "kagent"
+    package.mkdir()
+    (package / "module.py").write_text("print('ok')\n", encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_module.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "kagent.agent.validation.learned_validation_commands_from_runs",
+        lambda limit=5: [
+            {
+                "label": "Learned validation",
+                "reason": "Learned from history.",
+                "command": "python -m pytest tests/test_other.py",
+                "cwd": ".",
+                "timeout_ms": 120000,
+                "learned": True,
+            }
+        ],
+    )
+
+    plan = build_validation_plan(
+        changed_paths={"kagent/module.py"},
+        workspace=StubWorkspace(tmp_path),
+    )
+
+    labels = [command["label"] for command in plan["commands"]]
+
+    assert labels[:3] == ["Python syntax check", "Related tests", "Pytest suite"]
+    assert labels[3] == "Learned validation"
+    assert [item["tier"] for item in plan["selection"]["tiers"]] == [
+        "syntax",
+        "related_tests",
+        "full_validation",
+        "learned",
+    ]
 
 
 def test_python_project_prefers_verify_script_when_available(tmp_path):

@@ -1,5 +1,44 @@
 # Agent Development Log
 
+## 2026-07-16: Rich Edit Change Plans
+
+### What changed
+
+- Mutation tool change plans now include a target summary, intent, risk summary, and validation hint.
+- Change plan timeline titles now show the operation and target, for example `Change plan: patch -> kagent/context.py`.
+- Change plan timeline details now surface risk or validation guidance instead of only the generic operation.
+- Existing pre-mutation behavior is preserved: the plan is emitted before approval and before the tool actually mutates the workspace.
+
+### Why
+
+The Agent already emitted basic `change_plan` events, but they were too terse for review and future selective rollback workflows. Richer plans make edits easier to audit before and after execution, and they create a clearer foundation for human approval, diff previews, and file-level rollback controls.
+
+### Verification
+
+```text
+28 targeted tests passed
+```
+
+## 2026-07-16: Layered Related-Test Validation
+
+### What changed
+
+- Validation plans now keep a stable command order: syntax check, related tests, then full project validation when available.
+- The default validation plan can include four commands, allowing learned validation commands to supplement without replacing the core validation ladder.
+- Related test inference now carries a reason, such as matching a changed source file or referencing a changed module/symbol.
+- Validation plans include a `selection` object describing the strategy, changed paths, command tiers, related tests, and reasons.
+- The run log timeline can show the validation selection strategy for `validation_plan` results.
+
+### Why
+
+The Agent already had related-test inference, but command limits and learned validation commands could make the plan less predictable. This change makes validation more Codex-like: run the fastest relevant checks first, then targeted tests, then full verification, while leaving an audit trail explaining why each test was chosen.
+
+### Verification
+
+```text
+22 targeted tests passed
+```
+
 ## 2026-07-16: Model Request Observability
 
 ### What changed

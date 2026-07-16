@@ -246,7 +246,12 @@ def _timeline_title(event_type: str, data: dict[str, Any]) -> str:
         return "Focused validation plan"
     if event_type == "change_plan":
         plan = data.get("plan") if isinstance(data.get("plan"), dict) else data
-        return f"Change plan: {plan.get('operation') or plan.get('tool_name') or 'change'}"
+        operation = plan.get("operation") or plan.get("tool_name") or "change"
+        target = plan.get("target_summary")
+        if not target:
+            paths = plan.get("paths") if isinstance(plan.get("paths"), list) else []
+            target = ", ".join(str(path) for path in paths[:3]) if paths else "workspace"
+        return f"Change plan: {operation} -> {target}"
     if event_type == "tool_loop_warning":
         return "Tool loop warning"
     if event_type == "patch_recovery":
@@ -259,6 +264,10 @@ def _timeline_title(event_type: str, data: dict[str, Any]) -> str:
 def _timeline_detail(event_type: str, data: dict[str, Any]) -> str | None:
     if event_type == "agent_status":
         return _short_text(data.get("detail"))
+    if event_type == "tool_result" and data.get("name") == "validation_plan":
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        selection = result.get("selection") if isinstance(result.get("selection"), dict) else {}
+        return _short_text(selection.get("strategy") or data.get("summary") or result.get("summary"))
     if event_type in {"tool_call", "tool_result"}:
         return _short_text(data.get("summary") or data.get("error"))
     if event_type in {"model_request", "model_response"}:
@@ -276,6 +285,18 @@ def _timeline_detail(event_type: str, data: dict[str, Any]) -> str | None:
         return _short_text(data.get("error"))
     if event_type == "run_finish":
         return _short_text(data.get("last_validation_summary") or data.get("summary"))
+    if event_type == "validation_plan":
+        result = data.get("result") if isinstance(data.get("result"), dict) else data
+        selection = result.get("selection") if isinstance(result.get("selection"), dict) else {}
+        return _short_text(selection.get("strategy") or result.get("summary"))
+    if event_type == "change_plan":
+        plan = data.get("plan") if isinstance(data.get("plan"), dict) else data
+        return _short_text(
+            plan.get("risk_summary")
+            or plan.get("validation_hint")
+            or plan.get("intent")
+            or plan.get("summary")
+        )
     if event_type == "tool_loop_warning":
         return _short_text(data.get("message") or data.get("reason") or data.get("warning"))
     if event_type == "patch_recovery":

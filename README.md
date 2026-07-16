@@ -21,6 +21,8 @@
 - The selected model and reasoning effort are persisted locally and restored when the app starts again.
 - Chat and coding Agent requests now inject runtime metadata so the assistant can answer the current model and reasoning effort from the actual request settings.
 - Coding Agent run logs now record model request, response, error, fallback, duration, model, and reasoning metadata for easier debugging.
+- Agent validation plans now prioritize syntax checks, related tests inferred from changed files, then full project validation, with selection reasons recorded in run logs.
+- Edit change plans now include intent, target summary, risk summary, and validation hints before mutation tools run.
 - Windows launch scripts prefer the project `.venv` instead of a hardcoded local Python path.
 - UI option labels, dialogs, tool cards, rollback actions, diff review, and task resume text now follow the selected app language.
 - Each chat session can now target its own workspace/project directory from the UI.
@@ -96,6 +98,8 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - `/model` 和 `/reasoning` 的选择会保存到本地状态文件，应用下次启动会自动恢复上次选择。
 - 普通聊天和代码 Agent 请求会注入当前运行时模型和推理强度元信息，因此询问“当前用的是什么模型”时会优先按实际请求设置回答。
 - 代码 Agent 运行日志会记录模型请求、响应、错误、降级重试、耗时、模型和推理强度，方便排查“实际用了哪个模型”和“为什么失败”。
+- Agent 验证计划会优先按“语法检查 -> 相关测试 -> 完整验证”的顺序执行，并把相关测试选择原因写入运行日志。
+- Agent 在执行写入、补丁、删除、回滚等变更工具前，会记录更完整的编辑计划，包括修改意图、目标文件、风险摘要和验证建议。
 - Agent 会压缩喂给模型的工具输出，避免大文件、大目录和长命令输出撑爆上下文。
 - Agent 支持长期项目记忆，会按工作区保存项目结构摘要、入口文件、配置文件、常用验证命令和稳定偏好，下次运行自动注入上下文。
 - Agent 会给工具失败结果附带恢复建议，例如路径不存在、参数错误、缺依赖、命令超时、代码错误等。

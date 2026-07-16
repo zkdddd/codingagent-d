@@ -12,7 +12,7 @@ from .repair_strategy import repair_strategy_prompt
 from .validation_learning import learned_validation_commands_from_runs
 
 
-MAX_VALIDATION_PLAN_COMMANDS = 3
+MAX_VALIDATION_PLAN_COMMANDS = 4
 
 
 def build_validation_plan(
@@ -86,6 +86,7 @@ def build_validation_plan(
         "project_root": workspace._rel(project_root) if project_root is not None else ".",
         "commands": commands,
         "command_count": len(commands),
+        "selection": _validation_selection(changed_list, commands),
     }
 
 
@@ -320,13 +321,13 @@ def _python_validation_commands(
         )
 
     search_root = project_root or workspace.root
-    commands.extend(
-        related_test_commands_for_changes(
-            changed_paths,
-            workspace_root=workspace.root,
-            cwd=command_cwd,
-        )
+    related_commands = related_test_commands_for_changes(
+        changed_paths,
+        workspace_root=workspace.root,
+        cwd=command_cwd,
+        max_commands=max(1, max_commands - 2),
     )
+    commands.extend(related_commands)
     verify_script = _project_verify_command(search_root)
     has_pytest = (
         _workspace_path_exists("tests", base=search_root)
@@ -354,7 +355,7 @@ def _python_validation_commands(
                 "timeout_ms": 240000,
             }
         )
-    return commands[:max_commands]
+    return _select_validation_commands(commands, max_commands=max_commands)
 
 
 def _node_validation_commands(
@@ -410,7 +411,7 @@ def _merge_learned_validation_commands(
     learned = learned_validation_commands_from_runs(limit=max_commands)
     merged: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for command_info in [*learned, *commands]:
+    for command_info in [*commands, *learned]:
         if not isinstance(command_info, dict):
             continue
         command = str(command_info.get("command") or "").strip()
@@ -425,6 +426,76 @@ def _merge_learned_validation_commands(
         if len(merged) >= max_commands:
             break
     return merged
+
+
+def _select_validation_commands(
+    commands: list[dict[str, Any]], *, max_commands: int
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(command_info: dict[str, Any]) -> None:
+        command = str(command_info.get("command") or "").strip()
+        if not command:
+            return
+        key = (command, str(command_info.get("cwd") or "."))
+        if key in seen or len(selected) >= max_commands:
+            return
+        seen.add(key)
+        selected.append(command_info)
+
+    for label in ("Python syntax check", "Python compileall"):
+        for command_info in commands:
+            if command_info.get("label") == label:
+                add(command_info)
+                break
+
+    related_limit = max(0, max_commands - len(selected) - 1)
+    for command_info in commands:
+        if command_info.get("label") == "Related tests" and related_limit > 0:
+            add(command_info)
+            related_limit -= 1
+
+    for label in ("Project verification", "Pytest suite"):
+        for command_info in commands:
+            if command_info.get("label") == label:
+                add(command_info)
+                break
+
+    for command_info in commands:
+        add(command_info)
+
+    return selected
+
+
+def _validation_selection(changed_paths: list[str], commands: list[dict[str, Any]]) -> dict[str, Any]:
+    tiers: list[dict[str, Any]] = []
+    for command_info in commands:
+        label = str(command_info.get("label") or "")
+        tier = "other"
+        if label in {"Python syntax check", "Python compileall"}:
+            tier = "syntax"
+        elif label == "Related tests":
+            tier = "related_tests"
+        elif label in {"Project verification", "Pytest suite"}:
+            tier = "full_validation"
+        elif command_info.get("learned") or str(command_info.get("source") or "") == "learned":
+            tier = "learned"
+        tiers.append(
+            {
+                "tier": tier,
+                "label": label,
+                "command": command_info.get("command"),
+                "reason": command_info.get("reason"),
+                "related_test": command_info.get("related_test"),
+                "related_reason": command_info.get("related_reason"),
+            }
+        )
+    return {
+        "strategy": "Run fast syntax checks first, then related tests, then full project validation when available.",
+        "changed_paths": changed_paths[:12],
+        "tiers": tiers,
+    }
 
 
 def _focused_command_for_diagnostic(item: dict[str, Any]) -> str | None:

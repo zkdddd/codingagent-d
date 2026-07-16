@@ -26,6 +26,17 @@ def test_run_log_timeline_extracts_readable_events(tmp_path, monkeypatch):
     logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
     logger.write("agent_status", {"phase": "planning", "detail": "Inspecting files"})
     logger.write(
+        "change_plan",
+        {
+            "plan": {
+                "operation": "patch",
+                "target_summary": "kagent/context.py",
+                "risk_summary": "risk=low; can change source content",
+                "validation_hint": "Run related tests.",
+            }
+        },
+    )
+    logger.write(
         "model_request",
         {
             "model": "gpt-5.5",
@@ -46,6 +57,18 @@ def test_run_log_timeline_extracts_readable_events(tmp_path, monkeypatch):
     )
     logger.write("tool_call", {"name": "read_file", "args": {"path": "README.md"}})
     logger.write("tool_result", {"name": "read_file", "ok": True, "summary": "Read README"})
+    logger.write(
+        "tool_result",
+        {
+            "name": "validation_plan",
+            "result": {
+                "summary": "Detected a Python project.",
+                "selection": {
+                    "strategy": "Run fast syntax checks first, then related tests, then full project validation when available."
+                },
+            },
+        },
+    )
     logger.finish("completed")
 
     timeline = run_log_timeline(logger.path)
@@ -53,15 +76,19 @@ def test_run_log_timeline_extracts_readable_events(tmp_path, monkeypatch):
     assert [item["title"] for item in timeline] == [
         "Run started",
         "Phase: planning",
+        "Change plan: patch -> kagent/context.py",
         "Model request: gpt-5.5/high",
         "Model response: gpt-5.5/high",
         "Tool call: read_file",
         "Tool result: read_file (ok)",
+        "Tool result: validation_plan (ok)",
         "Run finished: completed",
     ]
     assert timeline[1]["detail"] == "Inspecting files"
-    assert timeline[3]["detail"] == "123ms, tools, stream"
-    assert timeline[5]["detail"] == "Read README"
+    assert timeline[2]["detail"] == "risk=low; can change source content"
+    assert timeline[4]["detail"] == "123ms, tools, stream"
+    assert timeline[6]["detail"] == "Read README"
+    assert timeline[7]["detail"].startswith("Run fast syntax checks first")
 
 
 def test_summarize_run_for_display_includes_debugging_signals(tmp_path, monkeypatch):
