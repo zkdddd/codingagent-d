@@ -62,6 +62,7 @@ def summarize_run_log(path: str | Path) -> dict[str, Any]:
     event_counts = Counter(str(event.get("event") or "unknown") for event in events)
     status_events = [event for event in events if event.get("event") == "agent_status"]
     tool_events = [event for event in events if event.get("event") == "tool_call"]
+    model_request_events = [event for event in events if event.get("event") == "model_request"]
     finish = next((event for event in reversed(events) if event.get("event") == "run_finish"), None)
     start = next((event for event in events if event.get("event") == "run_start"), None)
 
@@ -83,6 +84,7 @@ def summarize_run_log(path: str | Path) -> dict[str, Any]:
         "event_counts": dict(event_counts),
         "last_phase": _last_phase(status_events),
         "tool_call_count": len(tool_events),
+        "model_request_count": len(model_request_events),
         "changed_paths": changed_paths,
         "validation_failed": bool(_event_data(finish).get("validation_failed")) if finish else False,
         "last_validation_summary": _event_data(finish).get("last_validation_summary") if finish else None,

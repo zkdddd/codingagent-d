@@ -3,6 +3,7 @@ from kagent import llm
 
 def test_chat_completion_retries_without_unsupported_reasoning(monkeypatch):
     calls = []
+    events = []
 
     class FakeCompletions:
         def create(self, **kwargs):
@@ -23,11 +24,22 @@ def test_chat_completion_retries_without_unsupported_reasoning(monkeypatch):
         model="gpt-5.5",
         messages=[{"role": "user", "content": "hi"}],
         reasoning_effort="high",
+        on_request_event=events.append,
     )
 
     assert result == "ok"
     assert calls[0]["reasoning_effort"] == "high"
     assert "reasoning_effort" not in calls[1]
+    assert [event["type"] for event in events] == [
+        "model_request",
+        "model_error",
+        "model_request",
+        "model_response",
+    ]
+    assert events[0]["model"] == "gpt-5.5"
+    assert events[0]["reasoning_effort"] == "high"
+    assert events[2]["fallback_without_reasoning"] is True
+    assert events[3]["fallback_without_reasoning"] is True
 
 
 def test_open_chat_stream_includes_runtime_metadata(monkeypatch):

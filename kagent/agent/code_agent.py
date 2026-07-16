@@ -405,6 +405,7 @@ class CodeAgent:
             timeout=AGENT_REQUEST_TIMEOUT_SECONDS,
             stream=True,
             reasoning_effort=self.reasoning_effort,
+            on_request_event=self._write_model_request_event,
         )
         try:
             return (
@@ -421,6 +422,13 @@ class CodeAgent:
             self.run_logger.write(str(event.get("type") or "event"), event)
         if on_event:
             on_event(event)
+
+    def _write_model_request_event(self, event: dict[str, Any]) -> None:
+        if self.run_logger is None:
+            return
+        event_type = str(event.get("type") or "model_event")
+        payload = {key: value for key, value in event.items() if key != "type"}
+        self.run_logger.write(event_type, payload)
 
     def _finish_run_log(self, status: str, data: dict[str, Any] | None = None) -> None:
         if self.run_logger is None or self._run_log_finished:

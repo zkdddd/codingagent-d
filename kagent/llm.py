@@ -1,5 +1,6 @@
 import os
-from typing import Iterator
+import time
+from typing import Any, Callable, Iterator
 
 from openai import OpenAI, Stream
 
@@ -60,17 +61,106 @@ def create_chat_completion_with_reasoning(
     *,
     reasoning_effort: str | None = None,
     retry_without_reasoning: bool = True,
+    on_request_event: Callable[[dict[str, Any]], None] | None = None,
     **kwargs,
 ):
+    started = time.perf_counter()
+    model = str(kwargs.get("model") or MODEL)
+    normalized_reasoning = normalize_reasoning_effort(reasoning_effort or REASONING_EFFORT)
+    metadata = {
+        "model": model,
+        "reasoning_effort": normalized_reasoning,
+        "stream": bool(kwargs.get("stream")),
+        "has_tools": bool(kwargs.get("tools")),
+        "retry_without_reasoning": bool(retry_without_reasoning),
+    }
+    _emit_request_event(on_request_event, "model_request", metadata)
     try:
-        return client.chat.completions.create(
+        response = client.chat.completions.create(
             **kwargs,
-            **_reasoning_param(reasoning_effort),
+            **_reasoning_param(normalized_reasoning),
         )
+        _emit_request_event(
+            on_request_event,
+            "model_response",
+            {
+                **metadata,
+                "fallback_without_reasoning": False,
+                "duration_ms": _duration_ms(started),
+            },
+        )
+        return response
     except Exception as exc:
         if not retry_without_reasoning or not _is_unsupported_reasoning_error(exc):
+            _emit_request_event(
+                on_request_event,
+                "model_error",
+                {
+                    **metadata,
+                    "fallback_without_reasoning": False,
+                    "duration_ms": _duration_ms(started),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
             raise
-        return client.chat.completions.create(**kwargs)
+        _emit_request_event(
+            on_request_event,
+            "model_error",
+            {
+                **metadata,
+                "fallback_without_reasoning": False,
+                "will_retry_without_reasoning": True,
+                "duration_ms": _duration_ms(started),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+
+    retry_started = time.perf_counter()
+    retry_metadata = {
+        **metadata,
+        "reasoning_effort": None,
+        "fallback_without_reasoning": True,
+    }
+    _emit_request_event(on_request_event, "model_request", retry_metadata)
+    try:
+        response = client.chat.completions.create(**kwargs)
+        _emit_request_event(
+            on_request_event,
+            "model_response",
+            {
+                **retry_metadata,
+                "duration_ms": _duration_ms(retry_started),
+            },
+        )
+        return response
+    except Exception as exc:
+        _emit_request_event(
+            on_request_event,
+            "model_error",
+            {
+                **retry_metadata,
+                "duration_ms": _duration_ms(retry_started),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        raise
+
+
+def _emit_request_event(
+    callback: Callable[[dict[str, Any]], None] | None,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    callback({"type": event_type, **data})
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, round((time.perf_counter() - started) * 1000))
 
 
 def open_chat_stream(

@@ -46,6 +46,9 @@ def summarize_run_for_display(path: str | Path) -> str:
     warnings = _event_titles(events, "tool_loop_warning")
     patch_recoveries = _event_titles(events, "patch_recovery")
     failure_focus = _event_titles(events, "failure_focus")
+    model_requests = _model_request_counts(events)
+    model_fallbacks = _model_fallback_count(events)
+    model_errors = _model_error_titles(events)
 
     lines = [
         "Run Log Summary",
@@ -62,6 +65,15 @@ def summarize_run_for_display(path: str | Path) -> str:
         lines.append("- tools: " + _format_counts(tool_names))
     else:
         lines.append("- tools: none")
+
+    if model_requests:
+        lines.append("- model_requests: " + _format_counts(model_requests))
+    else:
+        lines.append("- model_requests: none")
+    if model_fallbacks:
+        lines.append(f"- model_fallbacks: {model_fallbacks}")
+    if model_errors:
+        lines.append("- model_errors: " + "; ".join(model_errors))
 
     if failed_tools:
         lines.append("- failed_tools: " + ", ".join(failed_tools))
@@ -139,6 +151,43 @@ def _failed_tools(events: list[dict[str, Any]]) -> list[str]:
     return failed
 
 
+def _model_request_counts(events: list[dict[str, Any]]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for event in events:
+        if event.get("event") != "model_request":
+            continue
+        data = _event_data(event)
+        model = str(data.get("model") or "unknown")
+        reasoning = data.get("reasoning_effort")
+        label = f"{model}/{reasoning}" if reasoning else f"{model}/no-reasoning"
+        if data.get("fallback_without_reasoning"):
+            label += " fallback"
+        counts[label] += 1
+    return counts
+
+
+def _model_fallback_count(events: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for event in events
+        if event.get("event") == "model_response"
+        and bool(_event_data(event).get("fallback_without_reasoning"))
+    )
+
+
+def _model_error_titles(events: list[dict[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    for event in events:
+        if event.get("event") != "model_error":
+            continue
+        data = _event_data(event)
+        model = data.get("model") or "unknown"
+        error_type = data.get("error_type") or "error"
+        detail = _short_text(data.get("error"))
+        errors.append(f"{model} {error_type}: {detail}" if detail else f"{model} {error_type}")
+    return errors
+
+
 def _result_ok(data: dict[str, Any]) -> bool:
     if "ok" in data:
         return bool(data.get("ok"))
@@ -178,6 +227,19 @@ def _timeline_title(event_type: str, data: dict[str, Any]) -> str:
     if event_type == "tool_result":
         name = data.get("name") or "unknown"
         return f"Tool result: {name} ({'ok' if _result_ok(data) else 'failed'})"
+    if event_type == "model_request":
+        model = data.get("model") or "unknown"
+        effort = data.get("reasoning_effort") or "no-reasoning"
+        suffix = " fallback" if data.get("fallback_without_reasoning") else ""
+        return f"Model request: {model}/{effort}{suffix}"
+    if event_type == "model_response":
+        model = data.get("model") or "unknown"
+        effort = data.get("reasoning_effort") or "no-reasoning"
+        return f"Model response: {model}/{effort}"
+    if event_type == "model_error":
+        model = data.get("model") or "unknown"
+        error_type = data.get("error_type") or "error"
+        return f"Model error: {model} ({error_type})"
     if event_type == "validation_plan":
         return "Validation plan"
     if event_type == "focused_validation_plan":
@@ -199,6 +261,19 @@ def _timeline_detail(event_type: str, data: dict[str, Any]) -> str | None:
         return _short_text(data.get("detail"))
     if event_type in {"tool_call", "tool_result"}:
         return _short_text(data.get("summary") or data.get("error"))
+    if event_type in {"model_request", "model_response"}:
+        parts = []
+        if data.get("duration_ms") is not None:
+            parts.append(f"{data.get('duration_ms')}ms")
+        if data.get("has_tools"):
+            parts.append("tools")
+        if data.get("stream"):
+            parts.append("stream")
+        if data.get("fallback_without_reasoning"):
+            parts.append("fallback without reasoning")
+        return ", ".join(parts) if parts else None
+    if event_type == "model_error":
+        return _short_text(data.get("error"))
     if event_type == "run_finish":
         return _short_text(data.get("last_validation_summary") or data.get("summary"))
     if event_type == "tool_loop_warning":

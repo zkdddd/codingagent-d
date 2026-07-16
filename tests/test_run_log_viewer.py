@@ -25,6 +25,25 @@ def test_run_log_timeline_extracts_readable_events(tmp_path, monkeypatch):
 
     logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
     logger.write("agent_status", {"phase": "planning", "detail": "Inspecting files"})
+    logger.write(
+        "model_request",
+        {
+            "model": "gpt-5.5",
+            "reasoning_effort": "high",
+            "stream": True,
+            "has_tools": True,
+        },
+    )
+    logger.write(
+        "model_response",
+        {
+            "model": "gpt-5.5",
+            "reasoning_effort": "high",
+            "stream": True,
+            "has_tools": True,
+            "duration_ms": 123,
+        },
+    )
     logger.write("tool_call", {"name": "read_file", "args": {"path": "README.md"}})
     logger.write("tool_result", {"name": "read_file", "ok": True, "summary": "Read README"})
     logger.finish("completed")
@@ -34,12 +53,15 @@ def test_run_log_timeline_extracts_readable_events(tmp_path, monkeypatch):
     assert [item["title"] for item in timeline] == [
         "Run started",
         "Phase: planning",
+        "Model request: gpt-5.5/high",
+        "Model response: gpt-5.5/high",
         "Tool call: read_file",
         "Tool result: read_file (ok)",
         "Run finished: completed",
     ]
     assert timeline[1]["detail"] == "Inspecting files"
-    assert timeline[3]["detail"] == "Read README"
+    assert timeline[3]["detail"] == "123ms, tools, stream"
+    assert timeline[5]["detail"] == "Read README"
 
 
 def test_summarize_run_for_display_includes_debugging_signals(tmp_path, monkeypatch):
@@ -47,6 +69,34 @@ def test_summarize_run_for_display_includes_debugging_signals(tmp_path, monkeypa
 
     logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
     logger.write("agent_status", {"phase": "validating"})
+    logger.write("model_request", {"model": "gpt-5.5", "reasoning_effort": "high"})
+    logger.write(
+        "model_error",
+        {
+            "model": "gpt-5.5",
+            "reasoning_effort": "high",
+            "error_type": "ValueError",
+            "error": "unsupported parameter: reasoning_effort",
+            "will_retry_without_reasoning": True,
+        },
+    )
+    logger.write(
+        "model_request",
+        {
+            "model": "gpt-5.5",
+            "reasoning_effort": None,
+            "fallback_without_reasoning": True,
+        },
+    )
+    logger.write(
+        "model_response",
+        {
+            "model": "gpt-5.5",
+            "reasoning_effort": None,
+            "fallback_without_reasoning": True,
+            "duration_ms": 55,
+        },
+    )
     logger.write("tool_call", {"name": "run_command"})
     logger.write(
         "tool_result",
@@ -72,6 +122,9 @@ def test_summarize_run_for_display_includes_debugging_signals(tmp_path, monkeypa
     assert "status: failed" in display
     assert "last_phase: validating" in display
     assert "tools: run_command x1" in display
+    assert "model_requests: gpt-5.5/high x1, gpt-5.5/no-reasoning fallback x1" in display
+    assert "model_fallbacks: 1" in display
+    assert "model_errors: gpt-5.5 ValueError: unsupported parameter: reasoning_effort" in display
     assert "failed_tools: run_command (pytest failed)" in display
     assert "validation: failed: 1 failed" in display
     assert "changed_paths: kagent/agent/run_log_viewer.py" in display

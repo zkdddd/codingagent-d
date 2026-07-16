@@ -53,6 +53,7 @@ def test_read_and_summarize_run_log(tmp_path, monkeypatch):
     assert summary["event_counts"]["agent_status"] == 2
     assert summary["last_phase"] == "validating"
     assert summary["tool_call_count"] == 1
+    assert summary["model_request_count"] == 0
     assert summary["changed_paths"] == ["kagent/context.py"]
     assert summary["last_validation_summary"] == "pytest passed"
 

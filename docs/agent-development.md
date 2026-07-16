@@ -1,5 +1,25 @@
 # Agent Development Log
 
+## 2026-07-16: Model Request Observability
+
+### What changed
+
+- `create_chat_completion_with_reasoning` can now emit model request lifecycle events.
+- CodeAgent writes `model_request`, `model_response`, and `model_error` events into the existing run log.
+- Model log events include model name, reasoning effort, stream/tool flags, duration, errors, and whether the request fell back without `reasoning_effort`.
+- Run log summaries now show model request counts, fallback counts, and model errors.
+- Run log timelines now render model request/response/error entries in readable form.
+
+### Why
+
+After adding model and reasoning controls, the next debugging problem is visibility: the user needs to know what model was actually requested, whether reasoning was sent, and whether the API forced a fallback. Recording this in the existing Agent run log improves trust and makes model-routing issues much easier to diagnose.
+
+### Verification
+
+```text
+41 targeted tests passed
+```
+
 ## 2026-07-16: Persistent Runtime Model Preferences
 
 ### What changed
