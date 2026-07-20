@@ -6,6 +6,11 @@ KAgent can be presented as a local desktop Coding Agent and test-development aut
 
 ## Current Update: Run Review Expansion
 
+- Added `kagent/agent/run_analytics.py` for cross-run analytics and failure trend summaries.
+- Run Analytics now aggregates recent run status, health, quality-gate distribution, validation failure rate, unverified-change rate, failed tool rate, model error rate, top issue codes, top failing gate checks, top failed tools, top model errors, top validation commands, and recent problem runs.
+- Run Analytics can be filtered by the current workspace so project-level failure trends do not mix across different chats/projects.
+- Activity now includes a `Run Analytics` entry for opening the trend report from the same place as current diff review, task resume, and rollback history.
+- `suggest_self_improvements` now uses Run Analytics trends to recommend validation recovery, unverified-change reduction, failed-tool hardening, and model-error diagnostics based on recent run history.
 - Added `kagent/agent/run_review.py` as the first structured run-review analysis layer.
 - `build_run_review(run_log_path)` now aggregates run status, workspace, task, changed paths, validation state, failed tools, model request/error metadata, symbol impacts, project-rule health, risk flags, and recommended next steps.
 - `build_quality_gate(review)` now turns the same review payload into a pass/warn/fail gate with explicit checks.
@@ -115,6 +120,7 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - Agent 会写入 JSONL 运行日志，记录运行开始、阶段变化、工具调用、工具结果和运行结束。
 - Agent 支持运行日志查看器，可以按 `run_id` 或最新日志生成运行摘要和事件时间线，方便复盘失败工具、验证结果和变更路径。
 - Agent 支持历史运行搜索和导出，可以按状态、健康度、验证失败、未验证变更、失败工具筛选多次运行，并导出单次运行 Markdown 复盘报告。
+- Agent 支持运行趋势分析，可以按当前项目汇总最近多次运行的质量门禁、验证失败率、未验证率、失败工具、模型错误、常见问题码和最近问题运行。
 - Agent 支持运行自检报告，可以基于日志判断本次运行是否可信，并标记未完成、未验证变更、验证失败、失败工具和循环风险。
 - Agent 支持最终回复可信度接入，最终回答会根据自检结果明确提示未验证变更、验证失败、失败工具或循环风险。
 - UI 支持运行调试入口，可以在 Agent 执行日志卡片中查看本次运行日志摘要、自检结果和事件时间线。
@@ -129,7 +135,7 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - UI 的 Activity 面板会在当前差异区直接列出最近改动文件，超过限制时显示剩余数量。
 - UI 的 Activity 面板新增明确的返回按钮，关闭面板后回到主聊天界面。
 - UI 的 Activity 子面板新增返回 Activity 导航，当前差异、恢复历史和 rollback 历史都可以回到活动面板。
-- Agent 支持只读自优化建议工具 `suggest_self_improvements`，会基于项目结构、测试映射、长文件、TODO 和历史运行状态生成低风险优化候选。
+- Agent 支持只读自优化建议工具 `suggest_self_improvements`，会基于项目结构、测试映射、长文件、TODO、历史运行状态和运行趋势分析生成低风险优化候选。
 - 聊天输入框支持 `/` 唤醒命令面板，可以用 `/self` 快速填入自优化建议提示。
 - 聊天输入框支持 `/model` 模型切换命令，当前已内置 GPT-5.5、GPT-5.4、GPT-5.4-Mini、GPT-5.3-Codex 和 GPT-5.2。
 - 聊天输入框支持 `/reasoning` 推理强度切换命令，当前支持低、中、高、超高四档，并会作用于普通聊天、标题生成和代码 Agent 请求。
@@ -144,7 +150,7 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - Agent 会压缩喂给模型的工具输出，避免大文件、大目录和长命令输出撑爆上下文。
 - Agent 支持长期项目记忆，会按工作区保存项目结构摘要、入口文件、配置文件、常用验证命令和稳定偏好，下次运行自动注入上下文。
 - Agent 会给工具失败结果附带恢复建议，例如路径不存在、参数错误、缺依赖、命令超时、代码错误等。
-- 项目已加入测试入口 `run-tests.bat`，当前覆盖上下文、长期项目记忆、风险策略、命令风险分类、验证计划、验证命令学习、运行日志、运行日志查看器、历史运行搜索导出、运行自检、最终回复可信度、UI 运行调试入口、Agent 流式聚合、工具展示、工具输出压缩、错误恢复、增强任务拆解、长任务恢复、失败定位、失败聚焦读取、增量验证、文件级影响分析、引用级影响分析、项目地图、多语言符号搜索、变更计划、Patch 失败恢复、修复策略、防循环和增强回滚。
+- 项目已加入测试入口 `run-tests.bat`，当前覆盖上下文、长期项目记忆、风险策略、命令风险分类、验证计划、验证命令学习、运行日志、运行日志查看器、历史运行搜索导出、运行趋势分析、运行自检、最终回复可信度、UI 运行调试入口、Agent 流式聚合、工具展示、工具输出压缩、错误恢复、增强任务拆解、长任务恢复、失败定位、失败聚焦读取、增量验证、文件级影响分析、引用级影响分析、项目地图、多语言符号搜索、变更计划、Patch 失败恢复、修复策略、防循环和增强回滚。
 
 ## 常用开发命令
 

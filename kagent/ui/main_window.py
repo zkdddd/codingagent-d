@@ -41,6 +41,7 @@ from .. import config as app_config
 from .. import db
 from ..agent import WorkspaceTools
 from ..agent.project_map import build_project_map, summarize_project_map
+from ..agent.run_analytics import build_run_analytics, format_run_analytics_markdown
 from ..agent.run_history import list_run_history
 from ..agent.run_log_viewer import run_log_timeline, summarize_run_for_display
 from ..agent.run_review import (
@@ -138,6 +139,7 @@ UI_TEXT = {
         "activity_open_diff": "查看当前差异",
         "activity_open_resume": "恢复历史任务",
         "activity_open_history": "打开回滚历史",
+        "activity_open_analytics": "查看运行趋势",
         "activity_status_unavailable": "状态不可用",
         "activity_diff_clean": "当前没有可回滚改动",
         "activity_diff_count": "{count} 个当前改动文件",
@@ -148,6 +150,10 @@ UI_TEXT = {
         "activity_resume_recent_empty": "最近没有需要恢复的运行。",
         "activity_rollback_clean": "没有 rollback 历史",
         "activity_rollback_count": "{count} 条 rollback 记录",
+        "activity_analytics_empty": "没有可分析的运行记录",
+        "activity_analytics_summary": "{runs} 次运行，{problems} 次需要关注",
+        "run_analytics_tip": "汇总最近运行的质量门禁、验证失败、未验证变更、失败工具和模型错误趋势。",
+        "run_analytics_title": "运行趋势分析",
         "workspace": "工作区",
         "switch_workspace": "切换工作区",
         "select_workspace": "选择工作区",
@@ -396,6 +402,7 @@ UI_TEXT = {
         "activity_open_diff": "Review current diff",
         "activity_open_resume": "Resume previous run",
         "activity_open_history": "Open rollback history",
+        "activity_open_analytics": "View run analytics",
         "activity_status_unavailable": "Status unavailable",
         "activity_diff_clean": "No rollbackable changes",
         "activity_diff_count": "{count} changed path(s)",
@@ -406,6 +413,10 @@ UI_TEXT = {
         "activity_resume_recent_empty": "No recent runs need resume.",
         "activity_rollback_clean": "No rollback history",
         "activity_rollback_count": "{count} rollback record(s)",
+        "activity_analytics_empty": "No runs to analyze",
+        "activity_analytics_summary": "{runs} run(s), {problems} need attention",
+        "run_analytics_tip": "Summarize quality gates, validation failures, unverified changes, failed tools, and model error trends across recent runs.",
+        "run_analytics_title": "Run Analytics",
         "workspace": "Workspace",
         "switch_workspace": "Switch workspace",
         "select_workspace": "Select workspace",
@@ -1296,6 +1307,16 @@ def _activity_recent_path_lines(paths: list[str], limit: int = 3) -> list[str]:
     if remaining > 0:
         lines.append(_tf("activity_more_items", count=remaining))
     return lines
+
+
+def _activity_analytics_summary(analytics: dict[str, Any] | None) -> str:
+    if not isinstance(analytics, dict):
+        return _t("activity_status_unavailable")
+    run_count = int(analytics.get("run_count") or 0)
+    if run_count <= 0:
+        return _t("activity_analytics_empty")
+    problem_count = len(analytics.get("recent_problem_runs") or [])
+    return _tf("activity_analytics_summary", runs=run_count, problems=problem_count)
 
 
 def _session_title_for_workspace(path: str | Path) -> str:
@@ -4737,6 +4758,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{
 
         resume_candidates: list[dict[str, Any]] | None = None
         resume_count: int | None = None
+        analytics: dict[str, Any] | None = None
         try:
             resume_candidates = _resume_history_candidates(
                 list_run_history(limit=80),
@@ -4746,6 +4768,10 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         except Exception:
             resume_candidates = None
             resume_count = None
+        try:
+            analytics = build_run_analytics(limit=80, workspace_root=self._current_workspace_root())
+        except Exception:
+            analytics = None
 
         def add_activity_row(
             label_key: str,
@@ -4817,6 +4843,12 @@ QScrollBar::add-page, QScrollBar::sub-page {{
             "rollback_history_tip",
             lambda: self._toggle_rollback_history_panel(True),
         )
+        add_activity_row(
+            "activity_open_analytics",
+            _activity_analytics_summary(analytics),
+            "run_analytics_tip",
+            self._show_run_analytics,
+        )
 
         layout.addStretch(1)
 
@@ -4831,6 +4863,43 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         footer.addWidget(back_button)
         layout.addLayout(footer)
 
+        dialog.exec()
+
+    def _show_run_analytics(self) -> None:
+        try:
+            analytics = build_run_analytics(limit=80, workspace_root=self._current_workspace_root())
+            markdown = format_run_analytics_markdown(analytics)
+        except Exception as exc:
+            QMessageBox.warning(self, "kagent", _tf("read_run_log_failed", error=exc))
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(_t("run_analytics_title"))
+        dialog.resize(840, 660)
+        dialog.setStyleSheet(_dialog_style())
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        title = QLabel(_t("run_analytics_title"))
+        title.setStyleSheet(f"color: {C_TEXT_MAIN}; font-size: 14px; font-weight: 800;")
+        layout.addWidget(title)
+
+        view = QTextBrowser()
+        view.setOpenExternalLinks(False)
+        view.setStyleSheet(_text_view_style())
+        view.setHtml(render(markdown))
+        layout.addWidget(view, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        back_activity_button = buttons.addButton(
+            _t("activity_back_to_activity"), QDialogButtonBox.ButtonRole.ActionRole
+        )
+        back_activity_button.clicked.connect(
+            lambda _checked=False, dlg=dialog: self._return_dialog_to_activity(dlg)
+        )
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
         dialog.exec()
 
     def _show_current_diff_review(self) -> None:

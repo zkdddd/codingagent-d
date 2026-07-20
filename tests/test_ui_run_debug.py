@@ -1,5 +1,6 @@
 from kagent.agent.run_log import RunLogger
 from kagent.ui.main_window import (
+    _activity_analytics_summary,
     _activity_recent_path_lines,
     _activity_recent_resume_lines,
     _activity_status_summary,
@@ -290,6 +291,9 @@ def test_activity_entry_tooltips_distinguish_diff_resume_and_history(monkeypatch
     assert "current session" in _t("diff_review_tip")
     assert "previous run" in _t("resume_history_tip")
     assert "rollback records" in _t("rollback_history_tip")
+    assert _t("activity_open_analytics") == "View run analytics"
+    assert "validation failures" in _t("run_analytics_tip")
+    assert _t("run_analytics_title") == "Run Analytics"
 
     monkeypatch.setattr("kagent.config.APP_LANGUAGE", "zh")
     assert _t("activity")
@@ -301,6 +305,9 @@ def test_activity_entry_tooltips_distinguish_diff_resume_and_history(monkeypatch
     assert _t("diff_review_tip")
     assert _t("resume_history_tip")
     assert _t("rollback_history_tip")
+    assert _t("activity_open_analytics")
+    assert _t("run_analytics_tip")
+    assert _t("run_analytics_title")
 
 
 def test_activity_status_summary_handles_counts_and_empty_states(monkeypatch):
@@ -360,6 +367,22 @@ def test_activity_recent_path_lines_limits_changed_paths(monkeypatch):
         "+2 more",
     ]
     assert _activity_recent_path_lines([]) == ["No changed paths to show."]
+
+
+def test_activity_analytics_summary_counts_problem_runs(monkeypatch):
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+
+    assert _activity_analytics_summary(None) == "Status unavailable"
+    assert _activity_analytics_summary({"run_count": 0}) == "No runs to analyze"
+    assert (
+        _activity_analytics_summary(
+            {
+                "run_count": 5,
+                "recent_problem_runs": [{"run_id": "run-1"}, {"run_id": "run-2"}],
+            }
+        )
+        == "5 run(s), 2 need attention"
+    )
 
 
 def test_slash_commands_include_self_improvement_prompt(monkeypatch):

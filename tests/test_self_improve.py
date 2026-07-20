@@ -19,6 +19,16 @@ def test_suggest_self_improvements_returns_ranked_candidates(tmp_path, monkeypat
     (tests / "test_existing.py").write_text("def test_existing(): pass\n", encoding="utf-8")
 
     logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
+    logger.write(
+        "tool_result",
+        {
+            "name": "run_command",
+            "args": {"command": "python -m pytest -q"},
+            "ok": False,
+            "error": "pytest failed",
+        },
+    )
+    logger.write("model_error", {"model": "gpt-5.5", "error_type": "ValueError"})
     logger.finish(
         "completed",
         {
@@ -36,11 +46,14 @@ def test_suggest_self_improvements_returns_ranked_candidates(tmp_path, monkeypat
         },
     )
 
-    result = suggest_self_improvements(tmp_path, limit=5)
+    result = suggest_self_improvements(tmp_path, limit=8)
 
     assert result["ok"] is True
     assert result["suggestions"]
     kinds = [item["kind"] for item in result["suggestions"]]
+    assert "validation_trends" in kinds
+    assert "tool_trends" in kinds
+    assert "model_trends" in kinds
     assert "failed_runs" in kinds
     assert "missing_tests" in kinds
     assert "long_files" in kinds
