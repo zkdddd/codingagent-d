@@ -17,6 +17,7 @@ def build_run_review(run_log_path: str | Path) -> dict[str, Any]:
     model_errors = _model_errors(events)
     project_rules = _latest_project_rules(events)
     symbol_impacts = _symbol_impacts(summary, events)
+    validation_selection = _latest_validation_selection(events)
     risk_flags = _risk_flags(
         summary=summary,
         health=health,
@@ -43,6 +44,7 @@ def build_run_review(run_log_path: str | Path) -> dict[str, Any]:
         "model_requests": model_requests,
         "model_errors": model_errors,
         "symbol_impacts": symbol_impacts,
+        "validation_selection": validation_selection,
         "project_rules": project_rules,
         "health": {
             "status": health.get("health"),
@@ -86,6 +88,10 @@ def format_run_review_markdown(review: dict[str, Any]) -> str:
             f"- last_summary: {_inline(validation.get('last_summary') or 'none')}",
         ]
     )
+    selection_lines = _validation_selection_lines(review.get("validation_selection"))
+    if selection_lines:
+        lines.extend(["", "### Selection Rationale"])
+        lines.extend(selection_lines)
 
     lines.extend(["", "## Runtime Signals"])
     lines.extend(_bullet_lines(_failed_tool_lines(review.get("failed_tools")), empty="failed_tools: none"))
@@ -217,6 +223,10 @@ def format_regression_plan_markdown(review: dict[str, Any]) -> str:
     lines.extend(_bullet_lines(related_tests, empty="No related tests found in symbol impacts.", code=True))
     lines.extend(["", "## Commands", ""])
     lines.extend(_bullet_lines(commands, empty="No validation command recorded.", code=True))
+    selection_lines = _validation_selection_lines(review.get("validation_selection"))
+    if selection_lines:
+        lines.extend(["", "## Selection Rationale", ""])
+        lines.extend(selection_lines)
     lines.extend(["", "## Manual Checks", ""])
     lines.extend(_bullet_lines(_manual_check_lines(review, risk_flags), empty="No manual checks required from current signals."))
     lines.extend(["", "## Exit Criteria", ""])
@@ -304,6 +314,27 @@ def _latest_project_rules(events: list[dict[str, Any]]) -> dict[str, Any] | None
             "score": data.get("score"),
             "issue_count": data.get("issue_count"),
             "issues": data.get("issues") if isinstance(data.get("issues"), list) else [],
+        }
+    return None
+
+
+def _latest_validation_selection(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        data = _event_data(event)
+        selection = None
+        if event.get("event") == "validation_plan":
+            result = data.get("result") if isinstance(data.get("result"), dict) else data
+            selection = result.get("selection") if isinstance(result.get("selection"), dict) else None
+        elif event.get("event") == "tool_result" and data.get("name") == "validation_plan":
+            result = data.get("result") if isinstance(data.get("result"), dict) else {}
+            selection = result.get("selection") if isinstance(result.get("selection"), dict) else None
+        if not selection:
+            continue
+        tiers = selection.get("tiers") if isinstance(selection.get("tiers"), list) else []
+        return {
+            "strategy": selection.get("strategy"),
+            "changed_paths": _list(selection.get("changed_paths")),
+            "tiers": [item for item in tiers if isinstance(item, dict)][:12],
         }
     return None
 
@@ -517,6 +548,43 @@ def _quality_gate_markdown_lines(gate: Any) -> list[str]:
             f"- [{check.get('status') or 'unknown'}] `{check.get('code') or 'unknown'}`: "
             f"{check.get('message') or ''}"
         )
+    return lines
+
+
+def _validation_selection_lines(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    lines: list[str] = []
+    strategy = _short_text(value.get("strategy"), limit=220)
+    if strategy:
+        lines.append(f"- strategy: {strategy}")
+    tiers = value.get("tiers") if isinstance(value.get("tiers"), list) else []
+    for tier in tiers[:8]:
+        if not isinstance(tier, dict):
+            continue
+        command = str(tier.get("command") or "").strip()
+        if not command:
+            continue
+        parts = [
+            f"tier `{tier.get('tier') or 'other'}`",
+            f"label `{tier.get('label') or 'unknown'}`",
+        ]
+        if tier.get("selection_score") is not None:
+            parts.append(f"score `{tier.get('selection_score')}`")
+        if tier.get("success_rate") is not None:
+            parts.append(f"success `{tier.get('success_rate')}`")
+        if tier.get("failure_rate") is not None:
+            parts.append(f"failure `{tier.get('failure_rate')}`")
+        if tier.get("avg_duration_ms") is not None:
+            parts.append(f"avg `{tier.get('avg_duration_ms')}ms`")
+        if tier.get("symbol"):
+            parts.append(f"symbol `{tier.get('symbol')}`")
+        if tier.get("related_test"):
+            parts.append(f"test `{tier.get('related_test')}`")
+        reason = _short_text(tier.get("reason"), limit=180)
+        if reason:
+            parts.append(f"reason {reason}")
+        lines.append(f"- `{command}` - " + ", ".join(parts))
     return lines
 
 

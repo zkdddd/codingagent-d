@@ -1,5 +1,25 @@
 # Agent Development Log
 
+## 2026-07-20: Validation Selection In Run Review
+
+### What changed
+
+- Run Review now extracts the latest `validation_plan.selection` from run logs.
+- Run Review Markdown now shows validation selection rationale under the Validation section.
+- Regression Test Plan now includes the same selection rationale after validation commands.
+- Selection rows include tier, command, reason, success rate, failure rate, average duration, selection score, related test, and symbol when available.
+- Added tests for validation selection payload extraction and Markdown rendering.
+
+### Why
+
+Validation command ranking should be explainable after the run. Showing selection rationale in review artifacts makes it clear why the Agent chose each validation command and whether learned metrics influenced the decision.
+
+### Verification
+
+```text
+Targeted validation passed: 49 tests.
+```
+
 ## 2026-07-20: Learned Validation Command Ranking
 
 ### What changed

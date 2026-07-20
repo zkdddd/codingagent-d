@@ -16,6 +16,38 @@ def test_build_run_review_summarizes_clean_run(tmp_path, monkeypatch):
     logger.write("run_context", {"task": "Add run review core"})
     logger.write("model_request", {"model": "gpt-5.5", "reasoning_effort": "high"})
     logger.write(
+        "tool_result",
+        {
+            "name": "validation_plan",
+            "result": {
+                "selection": {
+                    "strategy": "Run fast syntax checks first, then learned validation.",
+                    "changed_paths": ["kagent/agent/run_review.py"],
+                    "tiers": [
+                        {
+                            "tier": "syntax",
+                            "label": "Python syntax check",
+                            "command": "python -m py_compile kagent/agent/run_review.py",
+                            "reason": "Compile changed Python files.",
+                            "selection_score": 0.824,
+                        },
+                        {
+                            "tier": "learned",
+                            "label": "Learned validation",
+                            "command": "python -m pytest -q tests/test_run_review.py",
+                            "reason": "Learned from history.",
+                            "success_rate": 1.0,
+                            "failure_rate": 0.0,
+                            "avg_duration_ms": 900,
+                            "selection_score": 1.04,
+                        },
+                    ],
+                }
+            },
+            "ok": True,
+        },
+    )
+    logger.write(
         "project_rules_check",
         {
             "path": "KAGENT.md",
@@ -55,6 +87,8 @@ def test_build_run_review_summarizes_clean_run(tmp_path, monkeypatch):
         }
     ]
     assert review["project_rules"]["health"] == "good"
+    assert review["validation_selection"]["strategy"].startswith("Run fast syntax checks")
+    assert review["validation_selection"]["tiers"][1]["tier"] == "learned"
     assert review["risk_flags"] == []
     assert review["quality_gate"]["status"] == "warn"
     assert any(check["code"] == "symbol_impact_present" for check in review["quality_gate"]["checks"])
@@ -63,6 +97,9 @@ def test_build_run_review_summarizes_clean_run(tmp_path, monkeypatch):
     ]
     assert "# Run Review" in markdown
     assert "status: `passed/recorded`" in markdown
+    assert "Selection Rationale" in markdown
+    assert "success `1.0`" in markdown
+    assert "avg `900ms`" in markdown
     assert "`kagent/agent/run_review.py`" in markdown
 
 
@@ -217,6 +254,29 @@ def test_bug_report_and_regression_plan_use_review_payload(tmp_path, monkeypatch
         },
     )
     logger.write("tool_result", {"name": "run_command", "ok": False, "error": "pytest failed"})
+    logger.write(
+        "tool_result",
+        {
+            "name": "validation_plan",
+            "result": {
+                "selection": {
+                    "strategy": "Use symbol related tests first.",
+                    "tiers": [
+                        {
+                            "tier": "symbol_related_tests",
+                            "label": "Related symbol test",
+                            "command": "python -m pytest -q tests/test_run_review.py",
+                            "reason": "Symbol impact selected this test.",
+                            "symbol": "build_run_review",
+                            "related_test": "tests/test_run_review.py",
+                            "selection_score": 0.92,
+                        }
+                    ],
+                }
+            },
+            "ok": True,
+        },
+    )
     logger.write("model_error", {"model": "gpt-5.5", "error_type": "ValueError", "error": "bad args"})
     logger.write(
         "project_rules_check",
@@ -261,6 +321,8 @@ def test_bug_report_and_regression_plan_use_review_payload(tmp_path, monkeypatch
     assert "`tests/test_run_review.py`" in plan
     assert "`python -m pytest -q tests/test_run_review.py`" in plan
     assert "risk_flag: `validation_failed`" in plan
+    assert "Selection Rationale" in plan
+    assert "symbol `build_run_review`" in plan
 
 
 def test_quality_gate_formats_pass_and_fail_states():

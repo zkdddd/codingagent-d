@@ -43,6 +43,7 @@ KAgent can be presented as a local desktop Coding Agent and test-development aut
 - Agent validation plans now prioritize syntax checks, related tests inferred from changed files, then full project validation, with selection reasons recorded in run logs.
 - Learned validation commands now track attempt count, success rate, failure rate, average duration, and last failure summary.
 - Validation plans now rank full and learned validation commands by success rate, failure rate, average duration, coverage tier, and learned-command confidence.
+- Run Review and Regression Test Plan now show validation selection rationale, including tier, command, reason, success/failure rates, average duration, and selection score.
 - Edit change plans now include intent, target summary, risk summary, and validation hints before mutation tools run.
 - Agent now has `find_symbol_context` for reading focused source excerpts around known symbols before editing.
 - Agent now has `find_symbol_references` for finding imports, calls, references, and test usage before changing a symbol.
