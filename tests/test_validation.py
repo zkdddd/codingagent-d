@@ -76,6 +76,9 @@ def test_validation_plan_keeps_related_tests_before_learned_commands(tmp_path, m
                 "cwd": ".",
                 "timeout_ms": 120000,
                 "learned": True,
+                "success_rate": 1.0,
+                "failure_rate": 0.0,
+                "avg_duration_ms": 900,
             }
         ],
     )
@@ -87,14 +90,54 @@ def test_validation_plan_keeps_related_tests_before_learned_commands(tmp_path, m
 
     labels = [command["label"] for command in plan["commands"]]
 
-    assert labels[:3] == ["Python syntax check", "Related tests", "Pytest suite"]
-    assert labels[3] == "Learned validation"
+    assert labels[:2] == ["Python syntax check", "Related tests"]
+    assert labels[2] == "Learned validation"
+    assert labels[3] == "Pytest suite"
     assert [item["tier"] for item in plan["selection"]["tiers"]] == [
         "syntax",
         "related_tests",
-        "full_validation",
         "learned",
+        "full_validation",
     ]
+    assert plan["selection"]["tiers"][2]["success_rate"] == 1.0
+    assert plan["selection"]["tiers"][2]["selection_score"] > plan["selection"]["tiers"][3]["selection_score"]
+
+
+def test_validation_plan_demotes_unreliable_learned_commands(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    package = tmp_path / "kagent"
+    package.mkdir()
+    (package / "module.py").write_text("print('ok')\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "kagent.agent.validation.learned_validation_commands_from_runs",
+        lambda limit=5: [
+            {
+                "label": "Learned validation",
+                "reason": "Learned but unreliable.",
+                "command": "python -m pytest tests/flaky.py",
+                "cwd": ".",
+                "timeout_ms": 120000,
+                "learned": True,
+                "success_rate": 0.25,
+                "failure_rate": 0.75,
+                "avg_duration_ms": 80000,
+            }
+        ],
+    )
+
+    plan = build_validation_plan(
+        changed_paths={"kagent/module.py"},
+        workspace=StubWorkspace(tmp_path),
+    )
+
+    labels = [command["label"] for command in plan["commands"]]
+
+    assert labels[:2] == ["Python syntax check", "Pytest suite"]
+    assert labels[2] == "Learned validation"
+    assert plan["selection"]["tiers"][1]["tier"] == "full_validation"
+    assert plan["selection"]["tiers"][2]["tier"] == "learned"
 
 
 def test_validation_plan_uses_symbol_impacts_before_full_validation(tmp_path):

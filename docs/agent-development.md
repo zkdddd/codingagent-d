@@ -1,5 +1,65 @@
 # Agent Development Log
 
+## 2026-07-20: Learned Validation Command Ranking
+
+### What changed
+
+- Learned validation commands now participate in final validation-command selection instead of being appended after built-in commands.
+- Validation selection ranks full and learned commands using success rate, failure rate, average duration, validation coverage tier, and learned-command confidence.
+- Fast syntax checks and related tests still stay ahead of broader validation commands.
+- `validation_plan.selection.tiers` now records success rate, failure rate, average duration, and selection score for each selected command.
+- Added tests that promote reliable learned commands and demote unreliable learned commands.
+
+### Why
+
+Recording validation metrics is only useful if those metrics affect behavior. This step makes the Agent prefer validation commands that are historically reliable and efficient while keeping focused checks first.
+
+### Verification
+
+```text
+Targeted validation passed: 21 tests.
+```
+
+## 2026-07-20: Validation Command Learning Metrics
+
+### What changed
+
+- Learned validation commands now track attempt count, success rate, failure rate, average duration, and last failure summary.
+- Learned command explanations now include success percentage, average runtime when available, and the most recent failure summary.
+- Learned command sorting now considers success rate, pass count, failure rate, runtime, recency, and command text.
+- Added focused tests for learned validation metrics and failure summaries.
+
+### Why
+
+Validation command learning needs more than pass/fail counts to choose useful checks. Recording reliability, speed, and recent failure context gives the Agent enough signal to prefer commands that are both relevant and efficient.
+
+### Verification
+
+```text
+Targeted validation passed: 20 tests.
+```
+
+## 2026-07-20: Symbol Impact Scoring
+
+### What changed
+
+- `symbol_change_plan` now returns a structured `impact_summary`.
+- Added `risk_level` and `impact_score` so symbol changes can be ranked by blast radius.
+- The impact summary now separates definition paths, production reference files, and test reference files.
+- Added affected-file count, production/test reference counts, related-test count, and reference-type counts.
+- Updated risk summaries to include risk level and impact score.
+- Added focused tests for the new impact fields.
+
+### Why
+
+The Agent already found symbol definitions, references, related tests, and validation commands. This step turns those raw lookup results into measurable impact analysis, which is easier to use for planning edits, explaining risk, and presenting the project as a code-intelligence tool.
+
+### Verification
+
+```text
+Targeted validation passed: 23 tests.
+```
+
 ## 2026-07-20: Quality Gate In Run History UI
 
 ### What changed

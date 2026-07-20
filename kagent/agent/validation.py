@@ -458,9 +458,7 @@ def _merge_learned_validation_commands(
             continue
         seen.add(key)
         merged.append(command_info)
-        if len(merged) >= max_commands:
-            break
-    return merged
+    return _select_validation_commands(merged, max_commands=max_commands)
 
 
 def _select_validation_commands(
@@ -491,16 +489,48 @@ def _select_validation_commands(
             add(command_info)
             related_limit -= 1
 
-    for label in ("Project verification", "Pytest suite"):
-        for command_info in commands:
-            if command_info.get("label") == label:
-                add(command_info)
-                break
+    full_and_learned = [
+        command_info
+        for command_info in commands
+        if command_info.get("label") in {"Project verification", "Pytest suite"}
+        or command_info.get("learned")
+        or str(command_info.get("source") or "") == "learned"
+    ]
+    for command_info in sorted(full_and_learned, key=_validation_command_rank, reverse=True):
+        add(command_info)
 
     for command_info in commands:
         add(command_info)
 
     return selected
+
+
+def _validation_command_rank(command_info: dict[str, Any]) -> tuple[float, float, float, float]:
+    label = str(command_info.get("label") or "")
+    learned = bool(command_info.get("learned")) or str(command_info.get("source") or "") == "learned"
+    success_rate = _float_metric(command_info.get("success_rate"), default=1.0 if not learned else 0.0)
+    failure_rate = _float_metric(command_info.get("failure_rate"), default=0.0)
+    avg_duration = _float_metric(command_info.get("avg_duration_ms"), default=240000.0)
+    coverage_bonus = 0.0
+    if label == "Project verification":
+        coverage_bonus = 0.18
+    elif label == "Pytest suite":
+        coverage_bonus = 0.14
+    elif learned:
+        coverage_bonus = 0.08
+    speed_score = max(0.0, 1.0 - min(avg_duration, 300000.0) / 300000.0)
+    learned_bonus = 0.04 if learned else 0.0
+    score = (success_rate * 0.58) + ((1.0 - failure_rate) * 0.22) + (speed_score * 0.12) + coverage_bonus + learned_bonus
+    return (score, success_rate, -failure_rate, -avg_duration)
+
+
+def _float_metric(value: Any, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _validation_selection(changed_paths: list[str], commands: list[dict[str, Any]]) -> dict[str, Any]:
@@ -524,6 +554,10 @@ def _validation_selection(changed_paths: list[str], commands: list[dict[str, Any
                 "label": label,
                 "command": command_info.get("command"),
                 "reason": command_info.get("reason"),
+                "success_rate": command_info.get("success_rate"),
+                "failure_rate": command_info.get("failure_rate"),
+                "avg_duration_ms": command_info.get("avg_duration_ms"),
+                "selection_score": round(_validation_command_rank(command_info)[0], 3),
                 "related_test": command_info.get("related_test"),
                 "related_reason": command_info.get("related_reason"),
                 "symbol": command_info.get("symbol"),
