@@ -14,6 +14,7 @@ def list_run_history(
     *,
     status: str | None = None,
     health: str | None = None,
+    quality_gate_status: str | None = None,
     validation_failed: bool | None = None,
     unverified: bool | None = None,
     failed_tools: bool | None = None,
@@ -33,6 +34,7 @@ def list_run_history(
             row,
             status=status,
             health=health,
+            quality_gate_status=quality_gate_status,
             validation_failed=validation_failed,
             unverified=unverified,
             failed_tools=failed_tools,
@@ -108,6 +110,7 @@ def _history_row(path: Path) -> dict[str, Any] | None:
     issue_codes = [str(issue.get("code") or "") for issue in issues if issue.get("code")]
     changed_paths = [str(item) for item in summary.get("changed_paths") or []]
     failed_tool_count = _failed_tool_count(health.get("failed_tools") or [])
+    quality_gate = summary.get("quality_gate") if isinstance(summary.get("quality_gate"), dict) else {}
 
     return {
         "path": str(path),
@@ -129,6 +132,9 @@ def _history_row(path: Path) -> dict[str, Any] | None:
         "event_count": summary.get("event_count", 0),
         "last_phase": summary.get("last_phase"),
         "issue_codes": issue_codes,
+        "quality_gate_status": quality_gate.get("status"),
+        "quality_gate_passed": quality_gate.get("passed"),
+        "quality_gate_summary": quality_gate.get("summary"),
         "mtime": path.stat().st_mtime,
     }
 
@@ -138,6 +144,7 @@ def _matches_filters(
     *,
     status: str | None,
     health: str | None,
+    quality_gate_status: str | None,
     validation_failed: bool | None,
     unverified: bool | None,
     failed_tools: bool | None,
@@ -145,6 +152,8 @@ def _matches_filters(
     if status is not None and row.get("status") != status:
         return False
     if health is not None and row.get("health") != health:
+        return False
+    if quality_gate_status is not None and row.get("quality_gate_status") != quality_gate_status:
         return False
     if validation_failed is not None and bool(row.get("validation_failed")) != validation_failed:
         return False

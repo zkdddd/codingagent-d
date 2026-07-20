@@ -4,12 +4,23 @@
 
 KAgent can be presented as a local desktop Coding Agent and test-development automation assistant. Resume-ready project notes are available at [docs/resume-project.md](docs/resume-project.md).
 
-## Current Update: Run Review Core
+## Current Update: Run Review Expansion
 
 - Added `kagent/agent/run_review.py` as the first structured run-review analysis layer.
 - `build_run_review(run_log_path)` now aggregates run status, workspace, task, changed paths, validation state, failed tools, model request/error metadata, symbol impacts, project-rule health, risk flags, and recommended next steps.
+- `build_quality_gate(review)` now turns the same review payload into a pass/warn/fail gate with explicit checks.
 - `format_run_review_markdown(review)` now formats the structured review into a compact Markdown report for future UI, bug-report, regression-plan, and quality-gate features.
+- `format_quality_gate_markdown(review)` now renders the gate result as a compact Markdown panel.
+- `format_bug_report_markdown(review)` now turns the same review payload into a compact bug report with title, reproduction steps, actual result, expected result, suspected cause, and validation evidence.
+- `format_regression_plan_markdown(review)` now turns the same review payload into a regression-test plan with scope, risk focus, related tests, commands, and manual checks.
+- Final trust checks now include a `quality_gate` result so final answers are prompted to disclose the gate status.
+- Run log summaries now show the stored `quality_gate` status and summary from `final_trust`.
+- Resume context now reads `quality_gate` checks and can prioritize recovery from gate failures or warnings.
+- Self-improvement suggestions now treat recent quality-gate failures and warnings as dedicated improvement signals.
+- Run history can now be filtered by `quality_gate_status`, and resume-history UI rows show `gate:fail` or `gate:warn` when relevant.
 - Added focused tests for clean runs, validation/model/tool/rule risks, symbol-impact extraction, and unfinished logs.
+- Run Debug now includes `Review`, `Quality Gate`, `Bug Report`, and `Regression Plan` actions that open structured run-review outputs from the same run log.
+- The review views reuse the same run log source as summary and timeline, so the run review stays tied to the live debug surface.
 - Run Debug now includes a `Resume Task` action.
 - The action builds resume context from the selected run log and submits it to the Agent as the next turn.
 - The chat header now includes a resume-history picker for recent failed, stopped, unverified, or validation-failed runs.

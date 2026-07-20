@@ -1,5 +1,123 @@
 # Agent Development Log
 
+## 2026-07-20: Quality Gate In Run History UI
+
+### What changed
+
+- `list_run_history()` now supports `quality_gate_status` filtering.
+- Run history rows now expose stored quality-gate status, pass state, and summary from the run finish payload.
+- Resume-history candidate selection now treats `gate:fail` and `gate:warn` runs as runs that need attention.
+- Resume-history labels now show `gate:fail` or `gate:warn` next to validation, unverified, and failed-tool signals.
+- Added targeted tests for gate-status filtering and UI resume-history labeling.
+
+### Why
+
+Quality Gate should be searchable from history, not only visible after opening a single run. Filtering and labeling make it faster to find runs that need follow-up and separate self-check health from gate status.
+
+### Verification
+
+```text
+Targeted validation passed: 43 tests.
+```
+
+## 2026-07-20: Quality Gate In Resume And Self-Improve
+
+### What changed
+
+- `build_resume_context()` now reads stored `quality_gate` data and includes gate checks in the resume prompt.
+- Resume priority can now become `resolve_quality_gate_failure` or `review_quality_gate_warnings` when no higher-priority validation/tool issue exists.
+- `suggest_self_improvements()` now surfaces recent quality-gate failures and warnings as dedicated improvement candidates.
+- Added tests for gate-driven resume priority, gate checks in resume prompts, and gate-driven self-improvement suggestions.
+
+### Why
+
+Quality gate data is only useful if it changes the next action. Routing it into resume and self-improvement makes the gate part of the agent's learning loop instead of a passive report.
+
+### Verification
+
+```text
+Targeted validation passed: 13 tests.
+```
+
+## 2026-07-20: Quality Gate In Final Trust And Run Logs
+
+### What changed
+
+- Final trust summaries now include a `quality_gate` result with pass/warn/fail status, check list, and compact summary.
+- Final response prompts now instruct the model to include the quality gate result alongside validation and residual-risk disclosures.
+- Run log summaries now expose the stored `quality_gate` status from `final_trust`.
+- `summarize_run_log()` now returns `final_trust` and `quality_gate` from the run finish payload.
+- Added focused tests for final-trust prompts, CodeAgent final prompts, run-log summary data, and Run Debug summary display.
+
+### Why
+
+The Quality Gate was available from Run Debug, but final answers also need the same decision signal. Recording and displaying it in final trust and run summaries makes the gate visible at the end of each task and after the run is reopened.
+
+### Verification
+
+```text
+Targeted validation passed: 22 tests.
+```
+
+## 2026-07-20: Run Review Quality Gate
+
+### What changed
+
+- Added `build_quality_gate(review)` to convert a run review into explicit pass/warn/fail checks.
+- Added `format_quality_gate_markdown(review)` to render the gate result as a standalone Markdown panel.
+- Wired the Run Debug surface to open `Quality Gate` from the same run log as Review, Bug Report, and Regression Plan.
+- Added gate checks for run completion, validation, tool failures, model errors, project-rule health, symbol-impact presence, and review risk flags.
+- Added tests for gate pass/fail behavior and the new Run Debug markdown mode.
+
+### Why
+
+Review output is useful, but engineering workflows need a decision layer. Quality gates make the run review actionable by turning the evidence into an explicit pass/warn/fail result.
+
+### Verification
+
+```text
+Targeted validation passed: 34 tests.
+```
+
+## 2026-07-20: Run Review Bug Report And Regression Plan
+
+### What changed
+
+- Added `format_bug_report_markdown(review)` to turn a run review into a bug report with title, reproduction steps, actual result, expected result, affected files, impacted symbols, suspected cause, suggested fix, and validation evidence.
+- Added `format_regression_plan_markdown(review)` to turn a run review into a regression plan with changed-file scope, risk focus, related tests, validation commands, manual checks, and exit criteria.
+- Added `Bug Report` and `Regression Plan` actions to the Run Debug trace card next to Summary, Timeline, and Review.
+- Routed `_run_debug_markdown(..., "bug_report")` and `_run_debug_markdown(..., "regression_plan")` through the same review payload used by the Review panel.
+- Added targeted tests for the new formatters and UI markdown modes.
+
+### Why
+
+Run Review should produce actionable testing artifacts, not only a diagnostic summary. Bug reports and regression plans make each Agent run easier to hand off, review in an interview, or use as test-development evidence.
+
+### Verification
+
+```text
+Targeted validation passed: 34 tests.
+```
+
+## 2026-07-20: Run Review UI Entry
+
+### What changed
+
+- Added a `Review` action to Run Debug so the structured run review report can be opened from the same debug surface as summary and timeline.
+- Wired `_run_debug_markdown(..., "review")` to `build_run_review(run_log_path)` and `format_run_review_markdown(review)`.
+- Added UI text for the review action and kept the trace-card buttons in sync with language changes.
+- Added a targeted test that verifies the review markdown includes the report title, task, changed path, and model-request summary.
+
+### Why
+
+The structured review layer was already available in code, but it was not reachable from the UI. Exposing it in Run Debug turns the analysis into a usable operator workflow instead of a library function.
+
+### Verification
+
+```text
+Targeted validation passed: 32 tests.
+```
+
 ## 2026-07-18: Run Review Core
 
 ### What changed

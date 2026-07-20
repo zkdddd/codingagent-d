@@ -185,6 +185,15 @@ def test_summarize_run_for_display_includes_debugging_signals(tmp_path, monkeypa
             ],
             "validation_failed": True,
             "last_validation_summary": "1 failed",
+            "final_trust": {
+                "health": "fail",
+                "quality_gate": {
+                    "status": "fail",
+                    "passed": False,
+                    "summary": "fail: 2 fail, 1 warn, 3 pass",
+                    "checks": [],
+                },
+            },
         },
     )
 
@@ -203,6 +212,7 @@ def test_summarize_run_for_display_includes_debugging_signals(tmp_path, monkeypa
     assert "changed_paths: kagent/agent/run_log_viewer.py" in display
     assert "symbol_impacts: run_log_timeline -> kagent/agent/run_log_viewer.py" in display
     assert "tests: tests/test_run_log_viewer.py" in display
+    assert "quality_gate: fail, fail: 2 fail, 1 warn, 3 pass" in display
     assert "loop_warnings: Repeated failed command" in display
     assert "patch_recovery: Read current file context" in display
     assert "failure_focus: 1 target(s)" in display

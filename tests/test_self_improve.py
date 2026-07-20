@@ -25,6 +25,14 @@ def test_suggest_self_improvements_returns_ranked_candidates(tmp_path, monkeypat
             "validated": True,
             "validation_failed": True,
             "changed_paths": ["kagent/agent/feature.py"],
+            "final_trust": {
+                "quality_gate": {
+                    "status": "fail",
+                    "passed": False,
+                    "summary": "fail: 2 fail, 1 warn, 2 pass",
+                    "checks": [],
+                }
+            },
         },
     )
 
@@ -36,6 +44,7 @@ def test_suggest_self_improvements_returns_ranked_candidates(tmp_path, monkeypat
     assert "failed_runs" in kinds
     assert "missing_tests" in kinds
     assert "long_files" in kinds
+    assert any(item["title"] == "Make quality-gate failures easier to recover from" for item in result["suggestions"])
     assert all(item["action"] for item in result["suggestions"])
     assert all(item["validation"] for item in result["suggestions"])
 

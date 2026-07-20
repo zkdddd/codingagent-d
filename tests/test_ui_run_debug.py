@@ -40,6 +40,52 @@ def test_run_debug_markdown_includes_summary_and_self_check(tmp_path, monkeypatc
     assert "tools: read_file x1" in markdown
 
 
+def test_run_debug_markdown_includes_run_review_report(tmp_path, monkeypatch):
+    monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+
+    logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
+    logger.write("run_context", {"task": "Add run review UI"})
+    logger.write("model_request", {"model": "gpt-5.5", "reasoning_effort": "medium"})
+    logger.finish("completed", {"validated": True, "changed_paths": ["kagent/ui/main_window.py"]})
+
+    markdown = _run_debug_markdown(str(logger.path), "review")
+
+    assert "# Run Review" in markdown
+    assert "Add run review UI" in markdown
+    assert "`kagent/ui/main_window.py`" in markdown
+    assert "model_request: `gpt-5.5`/`medium` x1" in markdown
+
+
+def test_run_debug_markdown_includes_bug_report_and_regression_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
+
+    logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
+    logger.write("run_context", {"task": "Fix validation failure"})
+    logger.write("tool_result", {"name": "run_command", "ok": False, "error": "pytest failed"})
+    logger.finish(
+        "completed",
+        {
+            "validated": False,
+            "validation_failed": True,
+            "changed_paths": ["kagent/ui/main_window.py"],
+            "last_validation_summary": "1 failed",
+        },
+    )
+
+    gate = _run_debug_markdown(str(logger.path), "quality_gate")
+    bug = _run_debug_markdown(str(logger.path), "bug_report")
+    plan = _run_debug_markdown(str(logger.path), "regression_plan")
+
+    assert "# Quality Gate" in gate
+    assert "[fail] `changes_validated`" in gate
+    assert "# Bug Report" in bug
+    assert "Validation failure after: Fix validation failure" in bug
+    assert "# Regression Test Plan" in plan
+    assert "`kagent/ui/main_window.py`" in plan
+
+
 def test_run_debug_markdown_includes_project_rules_health(tmp_path, monkeypatch):
     monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
     monkeypatch.setattr("kagent.config.APP_LANGUAGE", "en")
@@ -152,11 +198,19 @@ def test_resume_history_candidates_filter_problem_runs_by_workspace(tmp_path):
             "workspace_root": str(tmp_path / "other"),
             "failed_tool_count": 0,
         },
+        {
+            "run_id": "gate-run",
+            "status": "completed",
+            "health": "pass",
+            "workspace_root": str(tmp_path),
+            "quality_gate_status": "fail",
+            "failed_tool_count": 0,
+        },
     ]
 
     candidates = _resume_history_candidates(rows, workspace_root=str(tmp_path))
 
-    assert [item["run_id"] for item in candidates] == ["validation-run"]
+    assert [item["run_id"] for item in candidates] == ["validation-run", "gate-run"]
 
 
 def test_resume_history_item_label_and_markdown(monkeypatch):
@@ -169,6 +223,7 @@ def test_resume_history_item_label_and_markdown(monkeypatch):
             "health": "fail",
             "validation_failed": True,
             "failed_tool_count": 2,
+            "quality_gate_status": "warn",
         }
     )
     markdown = _resume_history_markdown(
@@ -183,6 +238,7 @@ def test_resume_history_item_label_and_markdown(monkeypatch):
 
     assert "validation_failed" in label
     assert "failed_tools:2" in label
+    assert "gate:warn" in label
     assert "abcdef1234" in label
     assert "Resume Preview" in markdown
     assert "fix_validation_failure" in markdown

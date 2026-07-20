@@ -44,12 +44,33 @@ def test_list_run_history_filters_failed_unverified_and_failed_tools(tmp_path, m
         "completed",
         {"validated": True, "validation_failed": True, "last_validation_summary": "1 failed"},
     )
+    gate_failed = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
+    gate_failed.finish(
+        "completed",
+        {
+            "validated": True,
+            "final_trust": {
+                "quality_gate": {
+                    "status": "fail",
+                    "passed": False,
+                    "summary": "fail: 1 fail, 0 warn, 4 pass",
+                    "checks": [],
+                }
+            },
+        },
+    )
 
-    assert [row["run_id"] for row in list_run_history(health="pass")] == [clean.run_id]
+    assert [row["run_id"] for row in list_run_history(health="pass")] == [
+        gate_failed.run_id,
+        clean.run_id,
+    ]
     assert [row["run_id"] for row in list_run_history(unverified=True)] == [unverified.run_id]
     assert [row["run_id"] for row in list_run_history(failed_tools=True)] == [failed_tool.run_id]
     assert [row["run_id"] for row in list_run_history(validation_failed=True)] == [
         validation_failed.run_id
+    ]
+    assert [row["run_id"] for row in list_run_history(quality_gate_status="fail")] == [
+        gate_failed.run_id
     ]
 
 

@@ -73,3 +73,19 @@ def test_final_trust_prompt_includes_symbol_impacts():
     assert "symbol_impacts" in prompt
     assert "build_validation_plan at kagent/agent/validation.py" in prompt
     assert "tests/test_validation.py" in prompt
+
+
+def test_final_trust_prompt_includes_quality_gate():
+    summary = build_final_trust_summary(
+        status="completed",
+        content_changed=True,
+        changed_paths=["kagent/app.py"],
+        validated=True,
+        validation_failed=False,
+    )
+
+    prompt = final_trust_prompt(summary)
+
+    assert "quality_gate" in summary
+    assert "quality_gate" in prompt
+    assert "Include the quality gate result" in prompt

@@ -43,6 +43,13 @@ from ..agent import WorkspaceTools
 from ..agent.project_map import build_project_map, summarize_project_map
 from ..agent.run_history import list_run_history
 from ..agent.run_log_viewer import run_log_timeline, summarize_run_for_display
+from ..agent.run_review import (
+    build_run_review,
+    format_quality_gate_markdown,
+    format_bug_report_markdown,
+    format_regression_plan_markdown,
+    format_run_review_markdown,
+)
 from ..agent.run_self_check import format_run_health_report
 from ..agent.task_resume import build_latest_resume_context, build_resume_context, format_resume_context
 from ..config import (
@@ -256,6 +263,10 @@ UI_TEXT = {
         "read_run_log_failed": "读取运行日志失败：{error}",
         "run_debug_title": "Agent 运行调试",
         "run_log_label": "运行日志：{name}",
+        "run_review": "运行复盘",
+        "quality_gate": "质量门禁",
+        "bug_report": "缺陷报告",
+        "regression_plan": "回归计划",
         "build_resume_context_failed": "生成恢复上下文失败：{error}",
         "diff_review_failed": "差异审查失败：{error}",
         "agent_run_log": "Agent 执行日志",
@@ -510,6 +521,10 @@ UI_TEXT = {
         "read_run_log_failed": "Read run log failed: {error}",
         "run_debug_title": "Agent Run Debug",
         "run_log_label": "Run log: {name}",
+        "run_review": "Run Review",
+        "quality_gate": "Quality Gate",
+        "bug_report": "Bug Report",
+        "regression_plan": "Regression Plan",
         "build_resume_context_failed": "Build resume context failed: {error}",
         "diff_review_failed": "Diff review failed: {error}",
         "agent_run_log": "Agent Run Log",
@@ -1076,6 +1091,15 @@ def _run_timeline_markdown(run_log_path: str, *, limit: int = 80) -> str:
 def _run_debug_markdown(run_log_path: str, mode: str) -> str:
     if mode == "timeline":
         return _run_timeline_markdown(run_log_path)
+    if mode in {"review", "quality_gate", "bug_report", "regression_plan"}:
+        review = build_run_review(run_log_path)
+        if mode == "review":
+            return format_run_review_markdown(review)
+        if mode == "quality_gate":
+            return format_quality_gate_markdown(review)
+        if mode == "bug_report":
+            return format_bug_report_markdown(review)
+        return format_regression_plan_markdown(review)
     return "\n\n".join(
         [
             f"### {_t('run_summary')}",
@@ -1183,6 +1207,7 @@ def _resume_history_candidates(
         if (
             status != "completed"
             or health in {"fail", "warn"}
+            or str(row.get("quality_gate_status") or "") in {"fail", "warn"}
             or bool(row.get("validation_failed"))
             or bool(row.get("unverified"))
             or int(row.get("failed_tool_count") or 0) > 0
@@ -1203,6 +1228,9 @@ def _resume_history_item_label(row: dict[str, Any]) -> str:
         priority_bits.append("validation_failed")
     if row.get("unverified"):
         priority_bits.append("unverified")
+    gate_status = str(row.get("quality_gate_status") or "").strip()
+    if gate_status in {"fail", "warn"}:
+        priority_bits.append(f"gate:{gate_status}")
     failed_count = int(row.get("failed_tool_count") or 0)
     if failed_count:
         priority_bits.append(f"failed_tools:{failed_count}")
@@ -2182,7 +2210,18 @@ class ToolTraceCard(QFrame):
 
         self.run_summary_btn = QPushButton(_t("log_summary"))
         self.run_timeline_btn = QPushButton(_t("timeline"))
-        for btn in (self.run_summary_btn, self.run_timeline_btn):
+        self.run_review_btn = QPushButton(_t("run_review"))
+        self.run_quality_gate_btn = QPushButton(_t("quality_gate"))
+        self.run_bug_report_btn = QPushButton(_t("bug_report"))
+        self.run_regression_plan_btn = QPushButton(_t("regression_plan"))
+        for btn in (
+            self.run_summary_btn,
+            self.run_timeline_btn,
+            self.run_review_btn,
+            self.run_quality_gate_btn,
+            self.run_bug_report_btn,
+            self.run_regression_plan_btn,
+        ):
             btn.setEnabled(False)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(
@@ -2193,6 +2232,10 @@ class ToolTraceCard(QFrame):
             debug_row.addWidget(btn)
         self.run_summary_btn.clicked.connect(lambda: self._request_run_debug("summary"))
         self.run_timeline_btn.clicked.connect(lambda: self._request_run_debug("timeline"))
+        self.run_review_btn.clicked.connect(lambda: self._request_run_debug("review"))
+        self.run_quality_gate_btn.clicked.connect(lambda: self._request_run_debug("quality_gate"))
+        self.run_bug_report_btn.clicked.connect(lambda: self._request_run_debug("bug_report"))
+        self.run_regression_plan_btn.clicked.connect(lambda: self._request_run_debug("regression_plan"))
         layout.addLayout(debug_row)
 
         self.plan_card = QFrame()
@@ -2227,6 +2270,10 @@ class ToolTraceCard(QFrame):
         self._run_log_path = str(run_log_path or "")
         self.run_summary_btn.setEnabled(bool(self._run_log_path))
         self.run_timeline_btn.setEnabled(bool(self._run_log_path))
+        self.run_review_btn.setEnabled(bool(self._run_log_path))
+        self.run_quality_gate_btn.setEnabled(bool(self._run_log_path))
+        self.run_bug_report_btn.setEnabled(bool(self._run_log_path))
+        self.run_regression_plan_btn.setEnabled(bool(self._run_log_path))
         self._refresh_run_meta()
 
     def set_trust_summary(self, trust: dict[str, Any]) -> None:
@@ -3229,6 +3276,18 @@ QScrollBar::add-page, QScrollBar::sub-page {{
             self.send_btn.setText(_t("send"))
         if hasattr(self, "stop_btn"):
             self.stop_btn.setText(_t("stopping") if self._stop_requested else _t("stop"))
+        if hasattr(self, "run_summary_btn"):
+            self.run_summary_btn.setText(_t("log_summary"))
+        if hasattr(self, "run_timeline_btn"):
+            self.run_timeline_btn.setText(_t("timeline"))
+        if hasattr(self, "run_review_btn"):
+            self.run_review_btn.setText(_t("run_review"))
+        if hasattr(self, "run_quality_gate_btn"):
+            self.run_quality_gate_btn.setText(_t("quality_gate"))
+        if hasattr(self, "run_bug_report_btn"):
+            self.run_bug_report_btn.setText(_t("bug_report"))
+        if hasattr(self, "run_regression_plan_btn"):
+            self.run_regression_plan_btn.setText(_t("regression_plan"))
         if hasattr(self, "scroll_bottom_btn"):
             self.scroll_bottom_btn.setToolTip(_t("scroll_bottom"))
         if hasattr(self, "chat_mode_chip"):

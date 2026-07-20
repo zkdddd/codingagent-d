@@ -122,6 +122,7 @@ def test_code_agent_final_prompt_includes_trust_check(tmp_path, monkeypatch):
 
     assert "Final response trust check." in prompt
     assert "unverified_changes" in prompt
+    assert "quality_gate" in prompt
 
 
 def test_code_agent_final_prompt_includes_symbol_impacts(tmp_path, monkeypatch):

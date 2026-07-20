@@ -68,6 +68,7 @@ def summarize_run_log(path: str | Path) -> dict[str, Any]:
 
     changed_paths: list[str] = []
     symbol_impacts: list[dict[str, Any]] = []
+    final_trust: dict[str, Any] = {}
     if finish and isinstance(finish.get("data"), dict):
         raw_paths = finish["data"].get("changed_paths") or []
         if isinstance(raw_paths, list):
@@ -75,6 +76,9 @@ def summarize_run_log(path: str | Path) -> dict[str, Any]:
         raw_symbol_impacts = finish["data"].get("symbol_impacts") or []
         if isinstance(raw_symbol_impacts, list):
             symbol_impacts = [item for item in raw_symbol_impacts if isinstance(item, dict)]
+        raw_final_trust = finish["data"].get("final_trust")
+        if isinstance(raw_final_trust, dict):
+            final_trust = raw_final_trust
 
     return {
         "path": str(Path(path)),
@@ -93,6 +97,8 @@ def summarize_run_log(path: str | Path) -> dict[str, Any]:
         "symbol_impacts": symbol_impacts,
         "validation_failed": bool(_event_data(finish).get("validation_failed")) if finish else False,
         "last_validation_summary": _event_data(finish).get("last_validation_summary") if finish else None,
+        "final_trust": final_trust,
+        "quality_gate": final_trust.get("quality_gate") if isinstance(final_trust.get("quality_gate"), dict) else None,
     }
 
 

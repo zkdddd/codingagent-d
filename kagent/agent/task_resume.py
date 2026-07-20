@@ -19,6 +19,8 @@ def build_resume_context(path: str | Path) -> dict[str, Any]:
     changed_paths = [str(item) for item in summary.get("changed_paths") or []]
     validation_summary = summary.get("last_validation_summary")
     failed_tools = health.get("failed_tools") or []
+    quality_gate = summary.get("quality_gate") if isinstance(summary.get("quality_gate"), dict) else {}
+    quality_gate_checks = _quality_gate_checks(quality_gate)
     issue_codes = [
         str(issue.get("code"))
         for issue in health.get("issues", [])
@@ -32,6 +34,7 @@ def build_resume_context(path: str | Path) -> dict[str, Any]:
         validation_failed=bool(summary.get("validation_failed")),
         failed_tools=failed_tools,
         issue_codes=issue_codes,
+        quality_gate=quality_gate,
     )
     prompt = _resume_prompt(
         summary=summary,
@@ -42,6 +45,8 @@ def build_resume_context(path: str | Path) -> dict[str, Any]:
         validation_summary=validation_summary,
         failed_tools=failed_tools,
         issue_codes=issue_codes,
+        quality_gate=quality_gate,
+        quality_gate_checks=quality_gate_checks,
     )
     return {
         "run_id": summary.get("run_id"),
@@ -54,6 +59,8 @@ def build_resume_context(path: str | Path) -> dict[str, Any]:
         "last_validation_summary": validation_summary,
         "failed_tools": failed_tools,
         "issue_codes": issue_codes,
+        "quality_gate": quality_gate,
+        "quality_gate_checks": quality_gate_checks,
         "plan_snapshot": plan_snapshot,
         "next_action": next_action,
         "priority": priority,
@@ -101,6 +108,12 @@ def format_resume_context(context: dict[str, Any]) -> str:
     issues = context.get("issue_codes") if isinstance(context.get("issue_codes"), list) else []
     if issues:
         lines.append("- issues: " + ", ".join(str(item) for item in issues))
+    quality_gate = context.get("quality_gate") if isinstance(context.get("quality_gate"), dict) else {}
+    if quality_gate:
+        lines.append(
+            f"- quality_gate: {quality_gate.get('status') or 'unknown'}"
+            f" ({quality_gate.get('summary') or 'no summary'})"
+        )
     lines.append("")
     lines.append(str(context.get("resume_prompt") or "No resume prompt available."))
     return "\n".join(lines)
@@ -163,6 +176,7 @@ def _resume_priority(
     validation_failed: bool,
     failed_tools: list[Any],
     issue_codes: list[str],
+    quality_gate: dict[str, Any],
 ) -> str:
     next_id = str((next_action or {}).get("id") or "")
     if "validation_failed" in issue_codes or validation_failed:
@@ -171,8 +185,12 @@ def _resume_priority(
         return "run_validation"
     if failed_tools:
         return "recover_failed_tool"
+    if str(quality_gate.get("status") or "") == "fail":
+        return "resolve_quality_gate_failure"
     if status and status != "completed":
         return "continue_incomplete_plan"
+    if str(quality_gate.get("status") or "") == "warn":
+        return "review_quality_gate_warnings"
     if next_action and next_id != "final_answer":
         return "continue_next_plan_step"
     return "summarize_or_confirm_done"
@@ -188,6 +206,8 @@ def _resume_prompt(
     validation_summary: Any,
     failed_tools: list[Any],
     issue_codes: list[str],
+    quality_gate: dict[str, Any],
+    quality_gate_checks: list[dict[str, str]],
 ) -> str:
     lines = [
         "Resume the previous Agent task from the latest reliable checkpoint.",
@@ -211,6 +231,20 @@ def _resume_prompt(
             lines.append(f"Failed tools to inspect first: {names}.")
     if issue_codes:
         lines.append("Known issue codes: " + ", ".join(issue_codes) + ".")
+    if quality_gate:
+        lines.append(
+            f"Quality gate: {quality_gate.get('status') or 'unknown'}; "
+            f"{quality_gate.get('summary') or 'no summary'}."
+        )
+    if quality_gate_checks:
+        lines.append(
+            "Quality gate checks to address: "
+            + "; ".join(
+                f"{item.get('status')}:{item.get('code')} - {item.get('message')}"
+                for item in quality_gate_checks[:5]
+            )
+            + "."
+        )
     lines.append(_priority_instruction(priority))
     return "\n".join(lines)
 
@@ -222,11 +256,34 @@ def _priority_instruction(priority: str) -> str:
         return "Start by validating the changed files before making new edits."
     if priority == "recover_failed_tool":
         return "Start by reviewing the failed tool output and choose a safer or narrower strategy."
+    if priority == "resolve_quality_gate_failure":
+        return "Start by resolving the failing quality gate check before making unrelated edits."
     if priority == "continue_incomplete_plan":
         return "Continue from the next unfinished plan step instead of restarting from scratch."
+    if priority == "review_quality_gate_warnings":
+        return "Start by reviewing the quality gate warnings and decide whether to fix or explicitly document them."
     if priority == "continue_next_plan_step":
         return "Continue the next pending plan step and keep the existing changed files in mind."
     return "Confirm whether any remaining work exists; if not, summarize the completed work and validation."
+
+
+def _quality_gate_checks(quality_gate: dict[str, Any]) -> list[dict[str, str]]:
+    checks = quality_gate.get("checks") if isinstance(quality_gate.get("checks"), list) else []
+    selected: list[dict[str, str]] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        status = str(check.get("status") or "")
+        if status not in {"fail", "warn"}:
+            continue
+        selected.append(
+            {
+                "code": str(check.get("code") or "unknown"),
+                "status": status,
+                "message": str(check.get("message") or ""),
+            }
+        )
+    return selected[:8]
 
 
 def _last_event(events: list[dict[str, Any]], event_type: str) -> dict[str, Any] | None:

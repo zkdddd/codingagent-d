@@ -47,6 +47,15 @@ def test_read_and_summarize_run_log(tmp_path, monkeypatch):
             "validated": True,
             "validation_failed": False,
             "last_validation_summary": "pytest passed",
+            "final_trust": {
+                "health": "pass",
+                "quality_gate": {
+                    "status": "pass",
+                    "passed": True,
+                    "summary": "pass: 0 fail, 0 warn, 4 pass",
+                    "checks": [],
+                },
+            },
         },
     )
 
@@ -66,6 +75,7 @@ def test_read_and_summarize_run_log(tmp_path, monkeypatch):
     assert summary["symbol_impacts"][0]["symbol"] == "manage_context"
     assert summary["symbol_impacts"][0]["related_tests"] == ["tests/test_context.py"]
     assert summary["last_validation_summary"] == "pytest passed"
+    assert summary["quality_gate"]["status"] == "pass"
 
 
 def test_latest_run_log_returns_newest_jsonl(tmp_path):

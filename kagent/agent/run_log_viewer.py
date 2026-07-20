@@ -50,6 +50,7 @@ def summarize_run_for_display(path: str | Path) -> str:
     model_fallbacks = _model_fallback_count(events)
     model_errors = _model_error_titles(events)
     project_rules = _latest_project_rules_check(events)
+    quality_gate = _quality_gate(summary)
 
     lines = [
         "Run Log Summary",
@@ -94,6 +95,9 @@ def summarize_run_for_display(path: str | Path) -> str:
     symbol_impacts = summary.get("symbol_impacts") if isinstance(summary.get("symbol_impacts"), list) else []
     if symbol_impacts:
         lines.append("- symbol_impacts: " + "; ".join(_symbol_impact_titles(symbol_impacts)))
+
+    if quality_gate:
+        lines.append("- quality_gate: " + _quality_gate_summary(quality_gate))
 
     if warnings:
         lines.append("- loop_warnings: " + "; ".join(warnings))
@@ -367,6 +371,17 @@ def _latest_project_rules_check(events: list[dict[str, Any]]) -> dict[str, Any] 
         data = _event_data(event)
         return data if data else None
     return None
+
+
+def _quality_gate(summary: dict[str, Any]) -> dict[str, Any] | None:
+    gate = summary.get("quality_gate")
+    return gate if isinstance(gate, dict) else None
+
+
+def _quality_gate_summary(gate: dict[str, Any]) -> str:
+    status = gate.get("status") or "unknown"
+    summary = gate.get("summary") or "none"
+    return f"{status}, {summary}"
 
 
 def _project_rules_summary(data: dict[str, Any]) -> str:

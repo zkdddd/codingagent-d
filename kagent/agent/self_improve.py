@@ -105,6 +105,8 @@ def _run_history_candidates(
         or int(row.get("failed_tool_count") or 0) > 0
     ]
     unverified = [row for row in relevant if bool(row.get("unverified"))]
+    gate_failed = [row for row in relevant if str(row.get("quality_gate_status") or "") == "fail"]
+    gate_warn = [row for row in relevant if str(row.get("quality_gate_status") or "") == "warn"]
 
     suggestions: list[dict[str, Any]] = []
     if failed:
@@ -135,6 +137,38 @@ def _run_history_candidates(
                 validation=["python -m pytest tests", ".\\run-tests.bat"],
                 risk="medium",
                 score=IMPROVEMENT_PRIORITIES["unverified_runs"] + min(len(unverified), 5),
+            )
+        )
+    if gate_failed:
+        suggestions.append(
+            _candidate(
+                kind="failed_runs",
+                title="Make quality-gate failures easier to recover from",
+                rationale=(
+                    f"{len(gate_failed)} recent run(s) failed the quality gate. "
+                    "This means the Agent can now see failure signals, but still needs tighter recovery behavior."
+                ),
+                files=_top_changed_paths(gate_failed),
+                action="Read the gate failure checks, then improve the narrowest recovery path that would have fixed them earlier.",
+                validation=["python -m pytest tests", ".\\run-tests.bat"],
+                risk="medium",
+                score=IMPROVEMENT_PRIORITIES["failed_runs"] + min(len(gate_failed), 5),
+            )
+        )
+    if gate_warn:
+        suggestions.append(
+            _candidate(
+                kind="todos",
+                title="Reduce quality-gate warning noise",
+                rationale=(
+                    f"{len(gate_warn)} recent run(s) only reached a warn-level quality gate. "
+                    "This usually means the run is usable but the feedback loop is still too loose."
+                ),
+                files=_top_changed_paths(gate_warn),
+                action="Pick one warning type, tighten the run workflow, and make the warning actionable in logs or prompts.",
+                validation=["python -m pytest tests", ".\\run-tests.bat"],
+                risk="low",
+                score=IMPROVEMENT_PRIORITIES["todos"] + min(len(gate_warn), 5),
             )
         )
     return suggestions
