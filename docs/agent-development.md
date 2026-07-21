@@ -2918,6 +2918,45 @@ python -m pytest -q --basetemp C:\tmp\kagent-pytest-all
 
 下一步建议做 flaky 检测：复用本次建好的 per-nodeid 跨 run 历史 + `status` 序列，判定 pass/fail 抖动（区分持续失败=回归、间歇失败=flaky），以及用 pyqtgraph 把 Run Analytics 从 markdown 文本报告升级为 pass-rate 时序看板 + flaky/耗时回归表。
 
+## 2026-07-21: Flaky Test Detection
+
+### 做了什么
+
+- `run_analytics` 新增 per-nodeid 跨 run pass/fail 历史聚合 `_test_case_run_statuses`：把同一 run 内同一用例的多次结果折叠成一条 run 级 status，**失败优先**（同一 run 内出现失败即记该 run 为 failed），避免重跑通过抹掉 flaky 信号。
+- 新增 flaky 判定 `_flaky_tests`：按 nodeid 跨 run 算 pass_count/fail_count/run_count，把"既通过又失败"且 `run_count >= 3` 的用例判为 flaky；全部失败=回归（不算 flaky）、全部通过=稳定（不算 flaky）。
+- 每个 flaky 用例输出 pass_rate、最近窗口失败数、最近状态、首次失败 run，便于定位"从第几次开始抖"。
+- `format_run_analytics_markdown` 新增 `## Flaky Tests` 节。
+- 复用 Step 2 已建好的跨 run per-nodeid 基础设施，flaky 是薄薄一层增量。
+
+### 为什么做
+
+- flaky 检测是测试平台工程师的招牌交付物，测试开发/游戏测试开发招聘方会专门扫这个关键词。
+- 它和耗时回归共享同一个 per-nodeid 跨 run 数据底座：耗时回归判"耗时方差"，flaky 判"pass/fail 抖动"，两者一起讲反而最强——耗时回归给即时信号，flaky 给招牌词。
+- 复用用户 RenderDoc 的"采集→聚合→找不稳定信号"方法论，作用在测试用例上而非帧，互补不重复图形调试背景。
+
+### 影响模块
+
+- `kagent/agent/run_analytics.py`
+- `tests/test_run_analytics.py`
+- `README.md`
+- `docs/agent-development.md`
+
+### 验证
+
+已完成针对性验证和全量验证：
+
+```text
+python -m pytest -q tests/test_run_analytics.py
+8 passed
+
+python -m pytest -q --basetemp C:\tmp\kagent-pytest-all
+224 passed
+```
+
+### 后续
+
+下一步建议用 pyqtgraph 把 Run Analytics 从 markdown 文本报告升级为可视化看板：`test_duration_trends`/`validation_command_trends` 已返回可绘制的耗时序列，再加 flaky 用例表和 pass-rate 时序曲线；之后可加 JUnit XML 导出供 CI（Jenkins/GitLab）消费，以及 mypy/ruff 工程门。
+
 ## 当前验证入口
 
 推荐使用：

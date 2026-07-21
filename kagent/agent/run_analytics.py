@@ -19,6 +19,15 @@ _TIMING_TREND_STABLE_RATIO = 0.1
 _TIMING_TREND_SERIES_LIMIT = 12
 _TIMING_TOP_LIMIT = 8
 
+# Flaky detection tuning. A test is flaky when it has both passed and failed
+# across runs (pass_rate strictly between 0 and 1) with enough history that the
+# oscillation is not a single accident. Tests that fail every run are a
+# regression, not flaky; tests that always pass are stable.
+_FLAKY_MIN_RUNS = 3
+_FLAKY_FAILED_STATUSES = {"failed", "error"}
+_FLAKY_PASSED_STATUSES = {"passed"}
+_FLAKY_RECENT_WINDOW = 5
+
 
 def build_run_analytics(
     runs_dir: str | Path | None = None,
@@ -41,6 +50,7 @@ def build_run_analytics(
     slowest_tests: dict[str, int] = {}
     nodeid_durations: dict[str, list[dict[str, Any]]] = {}
     command_durations: dict[str, list[dict[str, Any]]] = {}
+    nodeid_run_statuses: dict[str, list[str]] = {}
 
     for row in rows:
         for issue in row.get("issue_codes") or []:
@@ -66,6 +76,8 @@ def build_run_analytics(
             )
         for command, cmd_ms in _validation_command_durations(events).items():
             command_durations.setdefault(command, []).append({"ts": started_at, "ms": cmd_ms})
+        for nodeid, status in _test_case_run_statuses(events).items():
+            nodeid_run_statuses.setdefault(nodeid, []).append(status)
 
     run_count = len(rows)
     return {
@@ -90,6 +102,7 @@ def build_run_analytics(
         "test_status_counts": dict(test_status_counts),
         "top_failed_tests": _top_items(failed_test_counts),
         "slowest_tests": _duration_items(slowest_tests),
+        "top_flaky_tests": _flaky_tests(nodeid_run_statuses),
         "timing_regressions": _timing_regressions(nodeid_durations),
         "test_duration_trends": _test_duration_trends(nodeid_durations),
         "validation_command_trends": _validation_command_trends(command_durations),
@@ -132,6 +145,8 @@ def format_run_analytics_markdown(analytics: dict[str, Any]) -> str:
     lines.extend(_top_lines(analytics.get("top_failed_tests")))
     lines.extend(["", "## Slowest Tests", ""])
     lines.extend(_duration_lines(analytics.get("slowest_tests")))
+    lines.extend(["", "## Flaky Tests", ""])
+    lines.extend(_flaky_lines(analytics.get("top_flaky_tests")))
     lines.extend(["", "## Timing Regressions", ""])
     lines.extend(_timing_regression_lines(analytics.get("timing_regressions")))
     lines.extend(["", "## Validation Command Trends", ""])
@@ -251,6 +266,92 @@ def _test_case_counts(
         if prev is None or duration_ms >= int(prev.get("ms") or 0):
             durations[nodeid] = {"ms": duration_ms, "status": status}
     return status_counts, failed_tests, slowest, durations
+
+
+def _test_case_run_statuses(events: list[dict[str, Any]]) -> dict[str, str]:
+    # Collapse to one status per nodeid per run: a failure anywhere in the run
+    # marks that run as failed (so a re-run that passes does not erase the
+    # failure signal flaky detection needs).
+    run_status: dict[str, str] = {}
+    for event in events:
+        if event.get("event") != "test_case_result":
+            continue
+        data = _event_data(event)
+        nodeid = str(data.get("nodeid") or "unknown")
+        status = str(data.get("status") or "unknown")
+        current = run_status.get(nodeid)
+        if status in _FLAKY_FAILED_STATUSES:
+            run_status[nodeid] = "failed"
+        elif status in _FLAKY_PASSED_STATUSES and current not in _FLAKY_FAILED_STATUSES:
+            run_status[nodeid] = "passed"
+        elif current is None:
+            run_status[nodeid] = status
+    return run_status
+
+
+def _flaky_tests(
+    nodeid_run_statuses: dict[str, list[str]],
+    *,
+    limit: int = _TIMING_TOP_LIMIT,
+) -> list[dict[str, Any]]:
+    # rows are newest-first, so each nodeid list is newest-first; reverse to
+    # oldest-first so the tail is the most recent run.
+    flaky: list[dict[str, Any]] = []
+    for nodeid, statuses in nodeid_run_statuses.items():
+        ordered = list(reversed(statuses))
+        run_count = len(ordered)
+        if run_count < _FLAKY_MIN_RUNS:
+            continue
+        pass_count = sum(1 for s in ordered if s in _FLAKY_PASSED_STATUSES)
+        fail_count = sum(1 for s in ordered if s in _FLAKY_FAILED_STATUSES)
+        # Flaky = has BOTH passed and failed (pass_rate strictly in (0,1)).
+        # All-fail = regression (not flaky); all-pass = stable.
+        if pass_count == 0 or fail_count == 0:
+            continue
+        pass_rate = pass_count / run_count
+        recent = ordered[-_FLAKY_RECENT_WINDOW:]
+        recent_fail = sum(1 for s in recent if s in _FLAKY_FAILED_STATUSES)
+        first_fail_index = next(
+            (i for i, s in enumerate(ordered) if s in _FLAKY_FAILED_STATUSES),
+            None,
+        )
+        flaky.append(
+            {
+                "nodeid": nodeid,
+                "run_count": run_count,
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "pass_rate": round(pass_rate, 3),
+                "recent_fail_count": recent_fail,
+                "recent_status": ordered[-1],
+                "first_fail_run": (first_fail_index + 1) if first_fail_index is not None else None,
+            }
+        )
+    flaky.sort(
+        key=lambda item: (
+            -item["run_count"],
+            -abs(item["pass_rate"] - 0.5),
+            -item["fail_count"],
+            item["nodeid"],
+        )
+    )
+    return flaky[:limit]
+
+
+def _flaky_lines(value: Any) -> list[str]:
+    items = value if isinstance(value, list) else []
+    if not items:
+        return ["- none"]
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            f"- `{item.get('nodeid')}`: {item.get('pass_count')} pass / {item.get('fail_count')} fail "
+            f"of {item.get('run_count')} runs ({round(float(item.get('pass_rate') or 0) * 100, 1)}% pass, "
+            f"recent `{item.get('recent_status')}`, first fail run {item.get('first_fail_run')})"
+        )
+    return lines
 
 
 def _validation_command_durations(events: list[dict[str, Any]]) -> dict[str, int]:

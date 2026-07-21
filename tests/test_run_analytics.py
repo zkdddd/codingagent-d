@@ -219,3 +219,91 @@ def test_build_run_analytics_timing_handles_insufficient_history(tmp_path, monke
     markdown = format_run_analytics_markdown(analytics)
     assert "## Timing Regressions" in markdown
     assert "- none" in markdown
+
+
+def _write_run_with_case(tmp_path, nodeid, status, *, duration_ms=100):
+    log = RunLogger(session_id="s", workspace_root=str(tmp_path))
+    log.write(
+        "test_case_result",
+        {"nodeid": nodeid, "status": status, "duration_ms": duration_ms},
+    )
+    log.finish("completed", {"validated": True})
+    return log
+
+
+def test_build_run_analytics_detects_flaky_tests(tmp_path, monkeypatch):
+    monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("kagent.agent.run_history.STATE_DIR", str(tmp_path))
+
+    # Flaky test: alternates pass/fail across runs (oldest-first written).
+    flaky_nodeid = "tests/test_app.py::test_flaky"
+    for status in ("passed", "failed", "passed", "failed", "passed"):
+        _write_run_with_case(tmp_path, flaky_nodeid, status, duration_ms=120)
+
+    # Regression test: fails every run -> NOT flaky.
+    regression_nodeid = "tests/test_app.py::test_regression"
+    for _ in range(5):
+        _write_run_with_case(tmp_path, regression_nodeid, "failed", duration_ms=80)
+
+    # Stable test: passes every run -> NOT flaky.
+    stable_nodeid = "tests/test_app.py::test_stable"
+    for _ in range(5):
+        _write_run_with_case(tmp_path, stable_nodeid, "passed", duration_ms=90)
+
+    analytics = build_run_analytics(limit=50)
+
+    flaky_map = {item["nodeid"]: item for item in analytics["top_flaky_tests"]}
+    assert flaky_nodeid in flaky_map
+    flaky = flaky_map[flaky_nodeid]
+    assert flaky["run_count"] == 5
+    assert flaky["pass_count"] == 3
+    assert flaky["fail_count"] == 2
+    assert 0 < flaky["pass_rate"] < 1
+    # Regression (all fail) and stable (all pass) are not flaky.
+    assert regression_nodeid not in flaky_map
+    assert stable_nodeid not in flaky_map
+
+    markdown = format_run_analytics_markdown(analytics)
+    assert "## Flaky Tests" in markdown
+    assert flaky_nodeid in markdown
+    assert "3 pass / 2 fail of 5 runs" in markdown
+
+
+def test_build_run_analytics_flaky_requires_minimum_history(tmp_path, monkeypatch):
+    monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("kagent.agent.run_history.STATE_DIR", str(tmp_path))
+
+    # Only 2 runs (below the _FLAKY_MIN_RUNS=3 threshold) -> not enough history.
+    nodeid = "tests/test_app.py::test_short"
+    _write_run_with_case(tmp_path, nodeid, "passed")
+    _write_run_with_case(tmp_path, nodeid, "failed")
+
+    analytics = build_run_analytics(limit=50)
+
+    assert analytics["top_flaky_tests"] == []
+    markdown = format_run_analytics_markdown(analytics)
+    assert "## Flaky Tests" in markdown
+
+
+def test_build_run_analytics_flaky_failure_priority_within_run(tmp_path, monkeypatch):
+    monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("kagent.agent.run_history.STATE_DIR", str(tmp_path))
+
+    # In one run the test both passes (a retry) then fails: the run counts as
+    # failed, so across runs this still reads as pass-then-fail oscillation.
+    nodeid = "tests/test_app.py::test_retry"
+    log = RunLogger(session_id="s", workspace_root=str(tmp_path))
+    log.write("test_case_result", {"nodeid": nodeid, "status": "passed", "duration_ms": 50})
+    log.write("test_case_result", {"nodeid": nodeid, "status": "failed", "duration_ms": 60})
+    log.finish("completed", {"validated": True})
+    _write_run_with_case(tmp_path, nodeid, "passed")
+    _write_run_with_case(tmp_path, nodeid, "failed")
+
+    analytics = build_run_analytics(limit=50)
+
+    flaky_map = {item["nodeid"]: item for item in analytics["top_flaky_tests"]}
+    assert nodeid in flaky_map
+    # Three runs: [failed (pass-then-fail in run 1), passed, failed].
+    assert flaky_map[nodeid]["run_count"] == 3
+    assert flaky_map[nodeid]["fail_count"] == 2
+    assert flaky_map[nodeid]["pass_count"] == 1
