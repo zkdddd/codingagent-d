@@ -6,6 +6,12 @@ KAgent can be presented as a local desktop Coding Agent and test-development aut
 
 ## Current Update: Run Review Expansion
 
+- Added `kagent/agent/test_telemetry.py` as the first per-test telemetry layer.
+- Automatic direct pytest validation now appends a temporary `--junitxml` output, parses the JUnit XML, and writes one `test_case_result` run-log event per test case.
+- Test case telemetry records `nodeid`, status, duration, message, failure type, file, classname, and test name without changing older run-log schemas.
+- Validation command learning and Run Analytics normalize temporary `--junitxml` arguments so learned commands and trend reports stay stable.
+- Run Analytics now includes test-case totals, status distribution, top failed tests, and slowest tests.
+- Run Analytics now detects timing regressions per test case: it builds a cross-run duration history per nodeid, computes a median baseline, and flags tests whose latest duration jumped above a ratio + absolute-delta threshold while also classifying a slower/faster/stable trend, so a one-off spike is distinguished from a sustained slowdown. It also surfaces validation-command duration trends across runs.
 - Added `kagent/agent/run_analytics.py` for cross-run analytics and failure trend summaries.
 - Run Analytics now aggregates recent run status, health, quality-gate distribution, validation failure rate, unverified-change rate, failed tool rate, model error rate, top issue codes, top failing gate checks, top failed tools, top model errors, top validation commands, and recent problem runs.
 - Run Analytics can be filtered by the current workspace so project-level failure trends do not mix across different chats/projects.
@@ -100,6 +106,7 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - Agent 支持更细的命令风险分类，会标记验证命令、依赖变更、Git 写操作、网络命令、删除命令、链式 shell 和重定向等风险。
 - Agent 支持上下文管理，会压缩旧消息、保留近期关键对话，并持久化会话摘要。
 - Agent 支持自动验证流程，会根据项目类型生成验证计划，优先运行 `scripts/verify.ps1` 或测试命令。
+- Agent 支持用例级测试遥测，会在直接 pytest 自动验证时生成并解析 JUnit XML，把每条用例的 nodeid、状态、耗时和失败信息写入运行日志。
 - Agent 支持验证命令学习，会从历史运行日志中学习稳定通过的验证命令，并在后续验证计划和长期项目记忆中优先复用。
 - Agent 支持验证失败后的自动修复流程，会根据失败结果继续调整代码并重新验证。
 - Agent 支持增强任务拆解，会在运行前生成带目标、候选文件、风险、验证方式和下一步快照的检查清单，并在检查、修改、验证、总结时更新步骤状态。
@@ -120,7 +127,8 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - Agent 会写入 JSONL 运行日志，记录运行开始、阶段变化、工具调用、工具结果和运行结束。
 - Agent 支持运行日志查看器，可以按 `run_id` 或最新日志生成运行摘要和事件时间线，方便复盘失败工具、验证结果和变更路径。
 - Agent 支持历史运行搜索和导出，可以按状态、健康度、验证失败、未验证变更、失败工具筛选多次运行，并导出单次运行 Markdown 复盘报告。
-- Agent 支持运行趋势分析，可以按当前项目汇总最近多次运行的质量门禁、验证失败率、未验证率、失败工具、模型错误、常见问题码和最近问题运行。
+- Agent 支持运行趋势分析，可以按当前项目汇总最近多次运行的质量门禁、验证失败率、未验证率、失败工具、模型错误、常见问题码、用例状态、失败用例和慢用例。
+- Agent 支持耗时回归检测，会按用例 nodeid 跨运行收集耗时历史，用最近多次的中位数作为基线，当最新一次耗时同时超过基线的倍数阈值和绝对增量阈值时判定为回归，并给出 slower/faster/stable 趋势方向，区分单次尖峰与持续变慢；同时汇总验证命令的跨运行耗时趋势。
 - Agent 支持运行自检报告，可以基于日志判断本次运行是否可信，并标记未完成、未验证变更、验证失败、失败工具和循环风险。
 - Agent 支持最终回复可信度接入，最终回答会根据自检结果明确提示未验证变更、验证失败、失败工具或循环风险。
 - UI 支持运行调试入口，可以在 Agent 执行日志卡片中查看本次运行日志摘要、自检结果和事件时间线。
@@ -150,7 +158,7 @@ KAgent 当前阶段重点在代码 Agent 能力，不优先做复杂产品化扩
 - Agent 会压缩喂给模型的工具输出，避免大文件、大目录和长命令输出撑爆上下文。
 - Agent 支持长期项目记忆，会按工作区保存项目结构摘要、入口文件、配置文件、常用验证命令和稳定偏好，下次运行自动注入上下文。
 - Agent 会给工具失败结果附带恢复建议，例如路径不存在、参数错误、缺依赖、命令超时、代码错误等。
-- 项目已加入测试入口 `run-tests.bat`，当前覆盖上下文、长期项目记忆、风险策略、命令风险分类、验证计划、验证命令学习、运行日志、运行日志查看器、历史运行搜索导出、运行趋势分析、运行自检、最终回复可信度、UI 运行调试入口、Agent 流式聚合、工具展示、工具输出压缩、错误恢复、增强任务拆解、长任务恢复、失败定位、失败聚焦读取、增量验证、文件级影响分析、引用级影响分析、项目地图、多语言符号搜索、变更计划、Patch 失败恢复、修复策略、防循环和增强回滚。
+- 项目已加入测试入口 `run-tests.bat`，当前覆盖上下文、长期项目记忆、风险策略、命令风险分类、验证计划、用例级测试遥测、验证命令学习、运行日志、运行日志查看器、历史运行搜索导出、运行趋势分析、运行自检、最终回复可信度、UI 运行调试入口、Agent 流式聚合、工具展示、工具输出压缩、错误恢复、增强任务拆解、长任务恢复、失败定位、失败聚焦读取、增量验证、文件级影响分析、引用级影响分析、项目地图、多语言符号搜索、变更计划、Patch 失败恢复、修复策略、防循环和增强回滚。
 
 ## 常用开发命令
 

@@ -2830,6 +2830,94 @@ python -m pytest -q
 
 下一步建议做 Failure Attribution Templates，把常见失败趋势映射成更具体的修复计划模板，例如验证失败、工具失败、模型错误分别生成不同执行方案。
 
+## 2026-07-21: Per-Test Telemetry Foundation
+
+### 做了什么
+
+- 新增 `kagent/agent/test_telemetry.py`，负责 pytest JUnit XML 命令注入、解析和命令归一化。
+- 自动验证遇到直接 pytest 命令时，会追加临时 `--junitxml` 输出。
+- 验证命令执行结束后会解析 JUnit XML，并为每条用例写入 `test_case_result` 运行日志事件。
+- 每条用例记录 `nodeid`、`status`、`duration_ms`、`message`、`failure_type`、`file`、`classname` 和 `name`。
+- 额外写入 `test_case_telemetry` 汇总事件，记录本次命令解析到的用例数量、JUnit XML 路径和命令耗时。
+- `validation_learning` 和 `run_analytics` 会归一化临时 `--junitxml` 参数，避免历史学习和趋势统计被临时文件路径污染。
+- Run Analytics 新增用例总数、用例状态分布、失败用例 Top 和慢用例 Top。
+
+### 为什么做
+
+之前 KAgent 的验证判断主要停留在命令级：只知道 `pytest` 是否返回 0、命令耗时多少、输出摘要是什么。
+
+测试开发岗更看重的是用例级质量数据：哪条用例失败、失败是否重复、哪条用例变慢、是否存在 flaky。Per-Test Telemetry 是后续 flaky 检测、耗时回归和测试看板的地基。
+
+### 影响模块
+
+- `kagent/agent/test_telemetry.py`
+- `kagent/agent/code_agent.py`
+- `kagent/agent/run_analytics.py`
+- `kagent/agent/validation_learning.py`
+- `tests/test_test_telemetry.py`
+- `tests/test_run_analytics.py`
+- `tests/test_validation_learning.py`
+- `README.md`
+- `docs/agent-development.md`
+
+### 验证
+
+已完成针对性验证：
+
+```text
+python -m pytest -q tests/test_test_telemetry.py tests/test_run_analytics.py --basetemp C:\tmp\kagent-pytest-telemetry
+6 passed
+
+python -m pytest -q tests/test_test_telemetry.py tests/test_validation_learning.py tests/test_run_analytics.py --basetemp C:\tmp\kagent-pytest-telemetry
+12 passed
+
+python -m pytest -q --basetemp C:\tmp\kagent-pytest-all
+219 passed
+```
+
+### 后续
+
+下一步建议做耗时回归检测：基于 `test_case_result.duration_ms` 和命令级 `duration_ms` 计算慢用例、耗时异常上升和验证耗时趋势。
+
+## 2026-07-21: Timing Regression Detection
+
+### 做了什么
+
+- `run_analytics` 新增跨运行 per-nodeid 用例耗时历史聚合：按 nodeid 收集每次 run 的 `duration_ms` 和 `status`，构建跨 run 序列（rows 按最新在前读入，内部反转为最旧在前，再取尾部作为"最新一次"）。
+- 新增耗时回归检测 `timing_regressions`：按 nodeid 取最近 `_TIMING_BASELINE_WINDOW`（默认 5）次的中位数作为基线，当最新一次耗时同时满足 `ratio >= 1.5` 且绝对增量 `>= 200ms` 时判定为回归，避免快用例的微小波动被误报。
+- 新增趋势方向 `_duration_trend`：把每个 nodeid 的耗时序列分前后两段比中位数，输出 `slower`/`faster`/`stable`，区分"单次尖峰"与"持续变慢"。
+- 新增验证命令耗时趋势 `validation_command_trends`：按命令（归一化去掉临时 `--junitxml`）跨 run 收集 `run_command` 的 `duration_ms`，输出样本数、平均、最近平均和趋势。
+- 新增 `test_duration_trends`：保留每个用例的耗时序列（截最近 12 个），为后续 pyqtgraph 看板留好数据。
+- `format_run_analytics_markdown` 新增 `## Timing Regressions` 和 `## Validation Command Trends` 两节。
+
+### 为什么做
+
+- 测试开发岗看重"耗时回归"这种可量化的质量信号，比单点"最慢用例"更能讲故事：有基线、有倍数、有趋势方向，能回答"哪条用例变慢了、是偶发还是持续"。
+- 这是 Per-Test Telemetry 地基的第一个消费方，证明用例级 `duration_ms` 能驱动跨 run 判断，也为 flaky 检测铺路：两者都基于 per-nodeid 跨 run 历史，只是判据从"耗时方差"换成"pass/fail 抖动"。本次顺带在每个样本里存了 `status`，下一步 flaky 可直接复用。
+
+### 影响模块
+
+- `kagent/agent/run_analytics.py`
+- `tests/test_run_analytics.py`
+- `README.md`
+- `docs/agent-development.md`
+
+### 验证
+
+已完成针对性验证和全量验证：
+
+```text
+python -m pytest -q tests/test_run_analytics.py
+5 passed
+
+python -m pytest -q --basetemp C:\tmp\kagent-pytest-all
+221 passed
+```
+
+### 后续
+
+下一步建议做 flaky 检测：复用本次建好的 per-nodeid 跨 run 历史 + `status` 序列，判定 pass/fail 抖动（区分持续失败=回归、间歇失败=flaky），以及用 pyqtgraph 把 Run Analytics 从 markdown 文本报告升级为 pass-rate 时序看板 + flaky/耗时回归表。
+
 ## 当前验证入口
 
 推荐使用：
