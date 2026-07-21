@@ -52,6 +52,7 @@ from .task_plan import (
     plan_to_dicts,
     set_plan_step,
 )
+from .test_telemetry import parse_junit_xml, prepare_pytest_junit_command
 from .tool_schema import tool_schema
 from .tool_loop_guard import loop_warning_prompt, record_tool_call
 from .tool_result_context import tool_result_json_for_model
@@ -964,8 +965,15 @@ class CodeAgent:
                 continue
             executed += 1
             call_id = f"validation-run-{validation_run_seq}-{idx}"
+            telemetry = prepare_pytest_junit_command(
+                str(command_info.get("command") or ""),
+                workspace_root=self.workspace.root,
+                run_id=self.run_logger.run_id if self.run_logger else "run",
+                validation_run_seq=validation_run_seq,
+                command_idx=idx,
+            )
             args = {
-                "command": str(command_info.get("command") or ""),
+                "command": str(telemetry.get("command") or command_info.get("command") or ""),
                 "cwd": str(command_info.get("cwd") or "."),
                 "timeout_ms": int(command_info.get("timeout_ms") or 120000),
             }
@@ -989,6 +997,15 @@ class CodeAgent:
                 messages=messages,
                 on_event=on_event,
                 round_idx=round_idx,
+            )
+            self._emit_test_case_telemetry(
+                telemetry=telemetry,
+                command_info=command_info,
+                command_result=result,
+                validation_run_seq=validation_run_seq,
+                command_idx=idx,
+                round_idx=round_idx,
+                on_event=on_event,
             )
             last_summary = validation_result_summary(result, command_info)
             if not result_ok:
@@ -1042,6 +1059,48 @@ class CodeAgent:
             force=True,
         )
         return True, last_summary, executed
+
+    def _emit_test_case_telemetry(
+        self,
+        *,
+        telemetry: dict[str, Any],
+        command_info: dict[str, Any],
+        command_result: dict[str, Any],
+        validation_run_seq: int,
+        command_idx: int,
+        round_idx: int,
+        on_event: EventFn | None,
+    ) -> None:
+        if not telemetry.get("enabled"):
+            return
+        junit_xml_path = str(telemetry.get("junit_xml_path") or "").strip()
+        cases = parse_junit_xml(junit_xml_path)
+        summary = {
+            "type": "test_case_telemetry",
+            "validation_run_seq": validation_run_seq,
+            "command_idx": command_idx,
+            "round": round_idx,
+            "command": telemetry.get("original_command") or command_info.get("command"),
+            "executed_command": command_result.get("command"),
+            "junit_xml_path": junit_xml_path,
+            "case_count": len(cases),
+            "returncode": command_result.get("returncode"),
+            "duration_ms": command_result.get("duration_ms"),
+        }
+        self._emit_event(on_event, summary)
+        for case in cases:
+            self._emit_event(
+                on_event,
+                {
+                    "type": "test_case_result",
+                    "validation_run_seq": validation_run_seq,
+                    "command_idx": command_idx,
+                    "round": round_idx,
+                    "command": telemetry.get("original_command") or command_info.get("command"),
+                    "junit_xml_path": junit_xml_path,
+                    **case,
+                },
+            )
 
     def _read_failure_focus(
         self,

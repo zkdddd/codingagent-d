@@ -6,6 +6,7 @@ from typing import Any
 
 from ..config import STATE_DIR
 from .run_log import read_run_events
+from .test_telemetry import normalize_pytest_command
 
 
 @dataclass
@@ -64,7 +65,7 @@ def learned_validation_commands_from_runs(
         except (OSError, ValueError):
             continue
         for command_info, ok, timestamp, result in _validation_command_results(events):
-            command = str(command_info.get("command") or "").strip()
+            command = normalize_pytest_command(str(command_info.get("command") or ""))
             if not command:
                 continue
             cwd = str(command_info.get("cwd") or ".")
@@ -124,7 +125,7 @@ def _validation_command_results(
         if event.get("event") != "tool_result" or data.get("name") != "run_command":
             continue
         args = data.get("args") if isinstance(data.get("args"), dict) else {}
-        command = str(args.get("command") or "").strip()
+        command = normalize_pytest_command(str(args.get("command") or ""))
         cwd = str(args.get("cwd") or ".")
         command_info = planned.get((command, cwd)) or planned.get((command, "."))
         if command_info is None:
@@ -145,7 +146,7 @@ def _planned_validation_commands(events: list[dict[str, Any]]) -> dict[tuple[str
         for command_info in commands:
             if not isinstance(command_info, dict):
                 continue
-            command = str(command_info.get("command") or "").strip()
+            command = normalize_pytest_command(str(command_info.get("command") or ""))
             if not command:
                 continue
             cwd = str(command_info.get("cwd") or ".")

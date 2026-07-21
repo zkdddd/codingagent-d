@@ -99,6 +99,34 @@ def test_learned_validation_commands_track_failures_and_duration(tmp_path, monke
     assert "last failure: 1 failed" in learned[0]["reason"]
 
 
+def test_learned_validation_commands_normalize_junitxml_pytest_commands(tmp_path, monkeypatch):
+    monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("kagent.agent.validation_learning.STATE_DIR", str(tmp_path))
+    command = {
+        "label": "Pytest suite",
+        "command": "python -m pytest -q",
+        "cwd": ".",
+        "timeout_ms": 240000,
+    }
+    logger = RunLogger(session_id="session-1", workspace_root=str(tmp_path))
+    logger.write("tool_result", {"name": "validation_plan", "result": {"commands": [command]}, "ok": True})
+    logger.write(
+        "tool_result",
+        {
+            "name": "run_command",
+            "args": {"command": 'python -m pytest -q --junitxml="C:/tmp/kagent/result.xml"', "cwd": "."},
+            "result": {"returncode": 0, "duration_ms": 1200},
+            "ok": True,
+        },
+    )
+    logger.finish("completed", {"validated": True})
+
+    learned = learned_validation_commands_from_runs()
+
+    assert learned[0]["command"] == "python -m pytest -q"
+    assert learned[0]["success_count"] == 1
+
+
 def test_learned_validation_commands_ignore_unplanned_shell_commands(tmp_path, monkeypatch):
     monkeypatch.setattr("kagent.agent.run_log.STATE_DIR", str(tmp_path))
     monkeypatch.setattr("kagent.agent.validation_learning.STATE_DIR", str(tmp_path))
