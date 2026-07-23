@@ -98,6 +98,8 @@ When the user asks KAgent to change code, the Agent can run this loop:
 - Exported standard JUnit XML (one testcase per per-test result with failure/error/skipped, or a run-level testcase when no per-test data), closing the consume-only asymmetry so the telemetry feeds Jenkins/GitLab/Unity-CI.
 - Measured real coverage with coverage.py, persisted coverage history, and added a regression gate (warns on a sustained drop); validation ranking now rewards full-suite commands by real measured coverage instead of a hardcoded label bonus — fixing a fake metric.
 - Added test-generation tools: `list_untested_symbols` finds the coverage gap (production symbols with no mapped test file), and `scaffold_test_for_symbol` drafts a collectible pytest scaffold with TODO placeholders (no fake assertions).
+- Hardened the quality gate: unified the runtime gate (shown in run history / Run Analytics trends) and the post-hoc review gate to the same check codes (run_completed / changes_validated / validation_passed / tool_failures_recovered / coverage_regression), so a run's gate status no longer disagrees between the history table and the review report; wired the coverage regression gate into it so a coverage drop actually downgrades the gate (closing the "coverage measured but never gated" gap).
+- Added a static-analysis gate (ruff + mypy) to the verify pipeline alongside compileall + pytest — ruff caught a real latent bug on first run (a path used `re` without importing it) plus unused imports/variables, and mypy runs in a lenient mode so the gate stays green without a full annotation pass. Together with runtime tool-argument JSON-Schema validation, this forms a "three-layer gate": input-contract (schema) + type-contract (mypy) + runtime quality (quality gate with coverage).
 
 ### AI-Agent Pillar (AI 工程)
 
@@ -105,13 +107,14 @@ When the user asks KAgent to change code, the Agent can run this loop:
 - Built multi-language symbol-level code intelligence: Python AST + lightweight JS/TS, Go, Rust, Java symbol discovery, references, change plans, impact scores, and risk summaries.
 - Implemented context engineering: water-level context compression, per-tool output truncation with omitted counts, workspace project-memory injection, and cross-session rolling summaries folded back into the prompt.
 - Built a test-failure memory (RAG variant): indexes per-test failures joined with symbol impacts and change plans, recalls similar historical failures by TF-IDF + cosine similarity (offline, no embedding API), with an honest `insufficient_corpus` guard when run history is too thin.
-- Implemented safety mechanisms: command-risk classification, pre-edit change plans, patch-failure recovery, tool-call loop detection, selective rollback, and final trust checks.
+- Implemented safety mechanisms: command-risk classification, pre-edit change plans, patch-failure recovery, tool-call loop detection, selective rollback, final trust checks, and runtime tool-argument validation against the declared JSON-Schema (required / type / additionalProperties enforced before dispatch).
 
 ## Test Development Angle
 
 This project is especially suitable for a 测试开发 / 游戏测试开发 resume because it demonstrates:
 
 - A complete test-platform loop: per-test telemetry → flaky/timing detection → visual dashboard → CI export → real coverage gating → test generation.
+- A "three-layer gate" engineering practice: input-contract (tool-argument JSON-Schema validation) + type-contract (mypy) + runtime quality (unified quality gate with coverage regression), with ruff+mypy wired into the verify pipeline — ruff's first run caught a latent bug pytest missed.
 - Test reliability (flaky detection), regression detection (timing + coverage gates), and CI integration (JUnit XML) — keywords test-dev recruiters actively screen for.
 - Failure diagnosis and repair-loop design, with a test-failure knowledge base for triage.
 - Reproducible, replayable run logs and quantified quality gates.
@@ -133,9 +136,10 @@ AI 工程工具 / 测试开发工具方向
 - 导出标准 JUnit XML 供 Jenkins/GitLab/Unity-CI 消费，闭合"只消费不产出"的不对称。
 - 用 coverage.py 量真实覆盖率并加回归 gate，修掉验证排序里写死的假覆盖率指标。
 - 实现测试生成：扫描"有产线引用但零测试"的符号，自动生成可被 pytest 发现的脚手架。
+- 硬化质量门：统一运行时门与复盘门为同一套检查码（消除历史表与复盘结论不一致），把覆盖率回归接进门禁；加 ruff + mypy 静态门与运行时工具参数 JSON-Schema 校验，形成"三层门禁"（输入契约 + 类型契约 + 运行质量），ruff 首跑即抓到一个 pytest 漏掉的潜在 NameError bug。
 - 实现多语言符号索引、符号引用分析与符号级变更计划，修改函数/类前分析定义、引用、相关测试与风险；实现上下文工程（水位压缩 + 工具输出截断 + 项目记忆 + 跨会话摘要）。
 - 实现测试失败记忆（TF-IDF 语义召回历史相似失败及变更意图，运行历史过薄时诚实返回 insufficient_corpus）、编辑前变更计划、风险策略、Patch 失败恢复、选择性回滚和最终可信度检查。
-技术栈：Python、PyQt6、OpenAI API、AST、SQLite、Pytest、coverage.py、pyqtgraph、JSONL、Git
+技术栈：Python、PyQt6、OpenAI API、AST、SQLite、Pytest、coverage.py、pyqtgraph、jsonschema、mypy、ruff、JSONL、Git
 ```
 
 ## Short Resume Version
@@ -144,6 +148,7 @@ AI 工程工具 / 测试开发工具方向
 - 基于 Python + PyQt6 + OpenAI API 实现本地 Coding Agent，支持代码读取、修改、命令执行、自动验证与运行日志复盘。
 - 构建符号级代码理解能力，支持多语言函数/类定位、引用分析、变更影响分析、相关测试推断与符号级修复提示。
 - 实现用例级测试遥测与测试平台：flaky 检测、耗时回归、pyqtgraph 可视化看板、JUnit XML 导出接 CI、真实覆盖率与回归 gate、测试生成。
+- 硬化"三层门禁"：工具参数 JSON-Schema 运行时校验 + mypy 类型门 + 统一并接覆盖率的质量门，ruff/mypy 接进 verify 流水线并抓到 pytest 漏掉的 bug。
 - 实现上下文工程、测试失败记忆（TF-IDF 召回）、Patch 失败恢复、选择性回滚与最终可信度检查，提升 AI 自动改代码的稳定性与安全性。
 ```
 
@@ -160,10 +165,12 @@ If asked "why TF-IDF instead of embeddings for the failure memory?", explain: th
 
 If asked "did you write this or did AI?", explain the concrete trade-offs you made: the flaky median baseline resists outliers; the timing gate needs both a ratio AND an absolute delta so fast tests are not flagged on jitter; generated test scaffolds use TODO placeholders instead of fake assertions to avoid false confidence; coverage_bonus was a hardcoded fake that was replaced with real measured coverage.
 
+If asked "how do you ensure quality / what gates do you have?", explain the three-layer gate: input-contract (tool arguments validated against the declared JSON-Schema before dispatch), type-contract (mypy in the verify pipeline), and runtime quality (a unified quality gate with a coverage-regression check, shown consistently in run history and the review report). Note that ruff's first run caught a latent `re`-not-imported bug that pytest never exercised — static checks catch a class of bugs tests can't reach.
+
 ## Current Verification Snapshot
 
 Latest full validation recorded in the development log:
 
 ```text
-250 tests passed
+262 tests passed
 ```
