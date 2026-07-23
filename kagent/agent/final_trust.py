@@ -14,6 +14,7 @@ def build_final_trust_summary(
     failed_tool_count: int = 0,
     loop_warning_count: int = 0,
     symbol_impacts: list[dict[str, Any]] | None = None,
+    coverage_gate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     if status != "completed":
@@ -68,6 +69,7 @@ def build_final_trust_summary(
             "status": status,
             "issues": issues,
             "changed_paths": changed_paths,
+            "coverage_gate": coverage_gate,
         }
     )
     return {
@@ -86,44 +88,58 @@ def build_final_trust_summary(
 
 
 def build_quality_gate_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Runtime quality gate. Check codes are aligned with run_review's
+    build_quality_gate (run_completed / changes_validated / validation_passed /
+    tool_failures_recovered / coverage_regression + per-issue checks) so the
+    gate shown in run history / run_analytics trends matches the richer
+    post-hoc review gate in naming and meaning.
+    """
     issues = summary.get("issues") if isinstance(summary.get("issues"), list) else []
-    checks: list[dict[str, str]] = []
     status = str(summary.get("status") or "unknown")
-    health = str(summary.get("health") or "unknown")
     validated = bool(summary.get("validated"))
     validation_failed = bool(summary.get("validation_failed"))
+    changed_paths = summary.get("changed_paths") if isinstance(summary.get("changed_paths"), list) else []
+    failed_tool_count = int(summary.get("failed_tool_count") or 0)
 
-    checks.append(
+    checks: list[dict[str, str]] = [
         {
             "code": "run_completed",
             "status": "pass" if status == "completed" else "fail",
             "message": f"Run status is `{status}`.",
-        }
-    )
-    checks.append(
+        },
         {
-            "code": "trustworthy",
-            "status": "pass" if bool(summary.get("trustworthy")) else "fail",
-            "message": f"Trust health is `{health}`.",
-        }
-    )
-    checks.append(
-        {
-            "code": "validation_recorded",
-            "status": "pass" if validated or not summary.get("changed_paths") else "fail",
+            "code": "changes_validated",
+            "status": "pass" if not changed_paths or validated else "fail",
             "message": "Changed paths were validated." if validated else "Changed paths lack successful validation.",
-        }
-    )
-    checks.append(
+        },
         {
-            "code": "validation_result",
+            "code": "validation_passed",
             "status": "fail" if validation_failed else "pass",
             "message": "Validation failure remains recorded." if validation_failed else "No validation failure recorded.",
-        }
-    )
+        },
+        {
+            "code": "tool_failures_recovered",
+            "status": "warn" if failed_tool_count else "pass",
+            "message": f"{failed_tool_count} failed tool group(s) recorded." if failed_tool_count else "No failed tool groups recorded.",
+        },
+    ]
+
+    coverage_gate = summary.get("coverage_gate") if isinstance(summary.get("coverage_gate"), dict) else None
+    if coverage_gate and str(coverage_gate.get("status") or "") == "warn":
+        checks.append(
+            {
+                "code": "coverage_regression",
+                "status": "warn",
+                "message": str(coverage_gate.get("message") or "Coverage regression detected."),
+            }
+        )
+
     for issue in issues:
         severity = str(issue.get("severity") or "unknown")
         code = str(issue.get("code") or "issue")
+        if code in {"run_not_completed", "unverified_changes", "validation_failed", "failed_tools", "loop_warning"}:
+            # Already represented by the aligned checks above; avoid duplicate rows.
+            continue
         checks.append(
             {
                 "code": code,

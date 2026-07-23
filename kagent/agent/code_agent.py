@@ -615,7 +615,20 @@ class CodeAgent:
             failed_tool_count=state.failed_tool_count,
             loop_warning_count=state.loop_warning_count,
             symbol_impacts=self._current_symbol_impacts(state),
+            coverage_gate=self._coverage_gate(),
         )
+
+    def _coverage_gate(self) -> dict[str, Any] | None:
+        """Evaluate the coverage regression gate from persisted history, if any."""
+        try:
+            trend = coverage_trend(self.workspace.root)
+            gate = coverage_regression_gate(trend)
+        except (OSError, ValueError):
+            return None
+        # Only surface the gate when there is enough history to judge.
+        if gate.get("recent_line_rate") is None:
+            return None
+        return gate
 
     @staticmethod
     def _current_symbol_impacts(state: AgentRunState) -> list[dict[str, Any]]:

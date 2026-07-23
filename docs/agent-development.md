@@ -3157,6 +3157,42 @@ python -m pytest -q
 
 下一步做 rag-failure-memory（需先验证 JSONL「符号→失败→修复」三元组语料密度）。
 
+## 2026-07-23: Quality Gate Hardening
+
+### 做了什么
+
+- **统一两套 quality gate**：之前 `run_review.build_quality_gate`（9 检查、事后复盘）和 `final_trust.build_quality_gate_summary`（4 检查、runtime 写入 run_finish、被历史表/Run Analytics 趋势回显）使用不同的检查 code（复盘用 run_completed/changes_validated/validation_passed/tool_failures_recovered；runtime 用 run_completed/trustworthy/validation_recorded/validation_result），导致历史表 gate=pass 的 run 复盘报告可能出 warn。现将 runtime gate 的检查 code 对齐到复盘版（run_completed/changes_validated/validation_passed/tool_failures_recovered），去掉 misaligned 的 trustworthy/validation_recorded/validation_result，消除两套 gate 的命名与项数不一致。
+- **coverage 进 gate**：`build_final_trust_summary` 新增 `coverage_gate` 参数；`build_quality_gate_summary` 新增 `coverage_regression` 检查——当 `coverage_regression_gate` 判 warn 时，gate 整体降为 warn 并附 message。`code_agent._final_trust_summary` 通过新增的 `_coverage_gate()` 从 `coverage_trend`+`coverage_regression_gate` 读取持久化的覆盖率趋势并传入。闭合了"覆盖率只量不门禁"的半成品：覆盖率回归现在真的能影响质量门状态，且经 final_trust 写入 run_finish → 历史表/趋势自动展示。
+
+### 为什么做
+
+- 这是 overview 文档自己点名的已知技术债：两套 gate 不一致会让面试官追问"为什么历史表说 pass、复盘说 warn"时答不上。统一它体现工程成熟度（能发现并修自己系统的内部不一致）。
+- 覆盖率功能做完后只量不门禁，是半成品——"覆盖率 gate"没真 gate 任何东西。接进 quality gate 才让 coverage 这条线真正闭环。
+
+### 影响模块
+
+- `kagent/agent/final_trust.py`（build_final_trust_summary + build_quality_gate_summary）
+- `kagent/agent/code_agent.py`（_final_trust_summary + _coverage_gate）
+- `tests/test_final_trust.py`（gate code 对齐 + coverage warn 测试）
+- `README.md`
+- `docs/agent-development.md`
+
+### 验证
+
+已完成针对性验证和全量验证：
+
+```text
+python -m pytest -q tests/test_final_trust.py
+8 passed
+
+python -m pytest -q
+253 passed
+```
+
+### 后续
+
+下一步可选：tool 参数 JSON-Schema 运行时校验（code_agent.py 只 json.loads 不校验 schema）、mypy/ruff 工程门、gentest 验证回路增强。
+
 ## 2026-07-23: Test Failure Memory (RAG failure-memory)
 
 ### 做了什么
