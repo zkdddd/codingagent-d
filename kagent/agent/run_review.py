@@ -151,7 +151,7 @@ def format_bug_report_markdown(review: dict[str, Any]) -> str:
     lines = [
         "# Bug Report",
         "",
-        f"## Title",
+        "## Title",
         "",
         f"{issue_title}",
         "",
@@ -384,11 +384,11 @@ def _nested_symbol_impacts(value: Any) -> list[dict[str, Any]]:
                 found.extend(_nested_symbol_impacts(child))
         return found
     if isinstance(value, list):
-        found: list[dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for item in value:
             if isinstance(item, dict | list):
-                found.extend(_nested_symbol_impacts(item))
-        return found
+                items.extend(_nested_symbol_impacts(item))
+        return items
     return []
 
 

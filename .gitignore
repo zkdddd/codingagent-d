@@ -9,3 +9,9 @@ venv/
 .idea/
 .vscode/
 .kagent_state/
+.kagent/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

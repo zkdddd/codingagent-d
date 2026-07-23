@@ -9,7 +9,6 @@ from typing import Any
 
 from ..config import STATE_DIR
 
-
 # Below this many failure records, recall honestly reports insufficient
 # corpus rather than returning noisy near-duplicate matches.
 _MIN_CORPUS_FOR_RECALL = 3

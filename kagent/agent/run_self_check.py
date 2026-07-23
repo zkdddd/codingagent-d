@@ -8,7 +8,6 @@ from ..config import STATE_DIR
 from .run_log import latest_run_log, read_run_events, summarize_run_log
 from .run_log_viewer import find_run_log
 
-
 PASS = "pass"
 WARN = "warn"
 FAIL = "fail"

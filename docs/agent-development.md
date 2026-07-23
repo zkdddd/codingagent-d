@@ -3231,6 +3231,52 @@ python -m pytest -q
 
 下一步可选：mypy/ruff 工程门（替换 verify.ps1 的 compileall+pytest-only）、gentest 验证回路增强、真实 run 积累 failure-memory 语料。
 
+## 2026-07-23: Static Analysis Gate (mypy + ruff)
+
+### 做了什么
+
+- 新增 `pyproject.toml` 配置 `[tool.ruff]`（保守规则集：E9 语法 / F pyflakes 未用 import/变量/未定义名 / I import 排序 / W291-293 尾空格）和 `[tool.mypy]`（宽松档：`ignore_missing_imports`、`check_untyped_defs=false`、`disable_error_code` 关掉需大量标注的 union-attr/var-annotated/arg-type 等，UI 目录排除因 PyQt6 动态属性）。
+- `scripts/verify.ps1` 在 compileall 后、pytest 前新增 `ruff check kagent` + `mypy` 两步，任一失败即阻断（`$ErrorActionPreference="Stop"`），形成"语法→lint→类型→测试"四道静态/动态门。
+- 修掉 ruff 首跑抓到的 8 个真问题：**F821 `main_window.py` 用 `re` 未 import（真潜在 NameError bug，在从未调用的 `_looks_like_agent_task` 里）**、F401 未用 import、F841 未用变量、F541 多余 f 前缀；ruff `--fix` 自动修 21 个 import 排序/尾空格。
+- 修掉 mypy 首跑剩的 3 个真问题：`run_review._nested_symbol_impacts` 变量重定义、`change_plan` dict value `+=` 类型、`tool_result_context` sum generator item type（后者是 mypy 误报，加 `# type: ignore[misc]` 诚实标注）。
+- `requirements.txt` 加 `mypy>=1.10`、`ruff>=0.5`。
+
+### 为什么做
+
+- 之前 `verify.ps1` 只有 compileall+pytest，零类型/lint 门——源码写了 type annotation 但无检查器强制，标注写错没人发现。接 ruff+mypy 把"声明"变"强制"，且 ruff 首跑就抓到一个 pytest 没覆盖的运行时潜在 bug（`re` 未 import），直接证明价值。
+- 这是测试开发岗的"质量门 / 静态检查"基本功：本地有真 pre-commit/CI gate 比口头讲更有说服力，和已做的 schema 校验、quality gate 凑齐"三层门禁"叙事（输入 schema gate + 类型 mypy gate + 运行 quality gate）。
+- 取舍：mypy 用宽松档而非 strict——strict 会炸出几百个标注问题需数小时修，违背"控制 scope"。宽松档只抓高价值错（未定义名/签名错），保持 gate 绿，把"有这层门"立起来。后续可逐步收紧。
+
+### 影响模块
+
+- `pyproject.toml`（新增）
+- `scripts/verify.ps1`
+- `kagent/ui/main_window.py`（加 import re、删未用变量）
+- `kagent/agent/test_gen.py`（删未用 import）
+- `kagent/agent/run_review.py`、`change_plan.py`、`tool_result_context.py`（修 mypy 错）
+- `requirements.txt`
+- `README.md`
+- `docs/agent-development.md`
+
+### 验证
+
+已完成静态门和全量验证：
+
+```text
+python -m ruff check kagent
+All checks passed!
+
+python -m mypy
+Success: no issues found in 44 source files
+
+python -m pytest -q
+262 passed
+```
+
+### 后续
+
+三档优化（gate 硬化 / schema 校验 / mypy+ruff 工程门）全部完成。后续可选：逐步收紧 mypy 到 strict、gentest 验证回路增强、真实 run 积累 failure-memory 语料、补 pre-commit hook。
+
 ## 2026-07-23: Test Failure Memory (RAG failure-memory)
 
 ### 做了什么

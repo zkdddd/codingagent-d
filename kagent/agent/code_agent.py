@@ -27,10 +27,12 @@ from ..llm import (
 )
 from .agent_stream import AggregatedAssistantMessage, aggregate_chat_completion_stream
 from .change_plan import build_change_plan, symbol_impacts_for_paths
+from .coverage import coverage_regression_gate, coverage_trend, save_coverage_snapshot
+from .coverage import measure_coverage as _measure_coverage
 from .failure_diagnostics import extract_failure_diagnostics
 from .failure_focus import focus_prompt, focus_targets_from_diagnostics
+from .failure_memory import recall_similar_failures as _recall_similar_failures
 from .final_trust import build_final_trust_summary, final_trust_prompt
-from .risk_policy import tool_policy
 from .patch_recovery import patch_failure_recovery, patch_recovery_prompt
 from .project_memory import format_project_memory_for_prompt, load_or_refresh_project_memory
 from .project_rules import (
@@ -39,12 +41,9 @@ from .project_rules import (
     format_project_rules_health_for_prompt,
     load_project_rules,
 )
+from .risk_policy import tool_policy
 from .run_log import RunLogger
 from .symbol_change_plan import build_symbol_change_plan
-from .test_gen import find_untested_symbols, generate_test_scaffold
-from .failure_memory import recall_similar_failures as _recall_similar_failures
-from .coverage import measure_coverage as _measure_coverage, save_coverage_snapshot, coverage_trend, coverage_regression_gate
-from .validation import set_recent_coverage_rate
 from .symbol_index import find_symbol_contexts, find_symbol_references, find_symbols
 from .task_plan import (
     PlanStatus,
@@ -56,18 +55,19 @@ from .task_plan import (
     plan_to_dicts,
     set_plan_step,
 )
+from .test_gen import find_untested_symbols, generate_test_scaffold
 from .test_telemetry import parse_junit_xml, prepare_pytest_junit_command
-from .tool_schema import tool_schema
-from .tool_schema import validate_tool_args
 from .tool_loop_guard import loop_warning_prompt, record_tool_call
 from .tool_result_context import tool_result_json_for_model
+from .tool_schema import tool_schema, validate_tool_args
 from .tool_view import tool_display_args, tool_preview_text, tool_report_section
 from .validation import (
     build_focused_validation_commands,
     build_validation_plan,
-    validation_result_summary,
+    set_recent_coverage_rate,
     validation_failure_prompt,
     validation_prompt,
+    validation_result_summary,
 )
 from .workspace import WorkspaceError, WorkspaceTools
 

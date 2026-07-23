@@ -5,7 +5,6 @@ from typing import Any
 
 from .project_memory import build_project_memory
 
-
 RULES_FILENAME = "KAGENT.md"
 DEFAULT_RULES_MAX_CHARS = 12000
 REQUIRED_SECTIONS = {

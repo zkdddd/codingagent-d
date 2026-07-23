@@ -20,9 +20,8 @@ from ..config import (
     ROLLBACK_ROOT,
     WORKSPACE_ROOT,
 )
-from .self_improve import suggest_self_improvements
 from .project_rules import check_project_rules, generate_project_rules, load_project_rules
-
+from .self_improve import suggest_self_improvements
 
 DEFAULT_IGNORED_DIRS = {
     ".git",

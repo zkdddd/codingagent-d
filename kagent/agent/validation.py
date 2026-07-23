@@ -11,7 +11,6 @@ from .impact_analysis import related_test_commands_for_changes
 from .repair_strategy import repair_strategy_prompt
 from .validation_learning import learned_validation_commands_from_runs
 
-
 MAX_VALIDATION_PLAN_COMMANDS = 4
 
 # Most recent real coverage line rate (0-1), set after a coverage run. When

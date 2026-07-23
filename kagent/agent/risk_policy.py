@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-
 RISK_LEVELS = ("safe", "low", "medium", "high", "critical")
 RISK_LABELS = {
     "safe": "Safe",

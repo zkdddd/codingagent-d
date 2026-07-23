@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 CHANGE_TOOLS = {
     "write_file",
     "apply_patch",
@@ -54,7 +53,7 @@ def build_change_plan(
     if symbol_impacts:
         plan["symbol_impacts"] = symbol_impacts
         symbols = ", ".join(str(item.get("symbol")) for item in symbol_impacts[:3])
-        plan["summary"] += f" Symbol impact: {symbols}."
+        plan["summary"] = str(plan.get("summary", "")) + f" Symbol impact: {symbols}."
     if preview_text:
         plan["preview_excerpt"] = _clip(preview_text, 2000)
     return plan

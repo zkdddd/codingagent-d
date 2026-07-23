@@ -8,7 +8,6 @@ from typing import Any
 
 from ..config import STATE_DIR
 
-
 # A coverage drop beyond this fraction of lines is flagged as a regression.
 _COVERAGE_REGRESSION_THRESHOLD = 0.03
 _COVERAGE_HISTORY_LIMIT = 50

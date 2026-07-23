@@ -7,7 +7,6 @@ from typing import Any
 from .failure_diagnostics import extract_failure_diagnostics
 from .tool_recovery import recovery_hint_for_tool
 
-
 DEFAULT_TEXT_LIMIT = 8000
 READ_FILE_CONTENT_LIMIT = 12000
 COMMAND_STREAM_LIMIT = 6000
@@ -162,7 +161,7 @@ def _compact_find_symbol_references(result: dict[str, Any]) -> dict[str, Any]:
     ]
     compacted["count"] = len(references)
     compacted["test_reference_count"] = sum(
-        1 for reference in references if isinstance(reference, dict) and reference.get("is_test")
+        1 for reference in references if isinstance(reference, dict) and bool(reference.get("is_test"))  # type: ignore[misc]
     )
     compacted["references_omitted"] = max(0, len(references) - SYMBOL_REFERENCE_LIMIT)
     compacted["context_compacted"] = len(references) > SYMBOL_REFERENCE_LIMIT

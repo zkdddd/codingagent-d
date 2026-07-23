@@ -15,6 +15,12 @@ $Files = @(
 Write-Host "==> Python syntax check"
 & $Python -m compileall -q @Files
 
+Write-Host "==> Ruff lint"
+& $Python -m ruff check kagent
+
+Write-Host "==> Mypy type check"
+& $Python -m mypy
+
 if (-not $SkipTests) {
     Write-Host "==> Pytest"
     & $Python -m pytest -q

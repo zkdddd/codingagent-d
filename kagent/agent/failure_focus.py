@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_CONTEXT_LINES = 40
 MAX_FOCUS_TARGETS = 3
 

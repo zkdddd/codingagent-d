@@ -1,0 +1,39 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".kagent_state", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Start conservative: E9 (syntax), F (pyflakes: unused import/var, undefined name),
+# plus a few high-signal style rules. Avoid noisy style rules to keep the gate green.
+select = ["E9", "F", "I", "W291", "W292", "W293"]
+# F401 unused-import is auto-fixed; keep it. F841 unused-variable is a real signal.
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401"]  # tests may import fixtures they appear not to use
+"__init__.py" = ["F401"]
+
+[tool.ruff.format]
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+# Lenient by design: the codebase predates mypy, so we do not enable strict mode
+# (which would surface hundreds of annotations). This gate catches the high-value
+# issues — undefined names, wrong-arg-count calls — without forcing a full
+# annotation pass. Noisy categories that need heavy annotations are disabled.
+ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_unused_ignores = false
+warn_redundant_casts = false
+warn_return_any = false
+no_implicit_optional = false
+# These error codes need heavy annotation work across 19k LOC; silence them so
+# the gate stays green while still catching name-defined / syntax / signature bugs.
+disable_error_code = ["union-attr", "var-annotated", "arg-type", "call-overload", "index", "attr-defined", "return-value", "assignment", "list-item", "dict-item", "override"]
+files = ["kagent"]
+exclude = ["kagent/ui/", "kagent/\\.kagent_state/"]
+# UI uses PyQt6 stubs + heavy dynamic attrs; exclude to keep the gate actionable.

@@ -1,16 +1,18 @@
 import html
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt6.QtCore import QEvent, QPoint, Qt, QSize, QTimer, pyqtSignal
+from dotenv import set_key
+from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
-    QApplication,
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -24,8 +26,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMessageBox,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -39,19 +41,18 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from dotenv import set_key
 
 from .. import config as app_config
 from .. import db
 from ..agent import WorkspaceTools
 from ..agent.project_map import build_project_map, summarize_project_map
 from ..agent.run_analytics import build_run_analytics, format_run_analytics_markdown
-from ..agent.run_history import list_run_history, export_latest_run_junit_xml
+from ..agent.run_history import export_latest_run_junit_xml, list_run_history
 from ..agent.run_log_viewer import run_log_timeline, summarize_run_for_display
 from ..agent.run_review import (
     build_run_review,
-    format_quality_gate_markdown,
     format_bug_report_markdown,
+    format_quality_gate_markdown,
     format_regression_plan_markdown,
     format_run_review_markdown,
 )
@@ -1531,10 +1532,6 @@ def _tool_event_summary(
     preview: str | None = None,
     policy: dict[str, Any] | None = None,
 ) -> str:
-    policy_prefix = ""
-    risk_label = _tool_policy_label(policy)
-    if risk_label:
-        policy_prefix = f"[{risk_label}] "
     if isinstance(result, dict):
         if {"health", "score", "issue_count"} & set(result.keys()):
             health = str(result.get("health") or "unknown")
@@ -4024,7 +4021,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{
         self.session_list.clear()
         sessions = db.list_sessions()
         for s in sessions:
-            title = s["title"] or _t("new_session")
             item = QListWidgetItem(self._format_session_list_item(s))
             item.setData(Qt.ItemDataRole.UserRole, s["id"])
             item.setToolTip(str(s.get("workspace_root") or _t("no_project_chat_detail")))
@@ -5301,7 +5297,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{
 
     def _refresh_chat_header(self):
         title = self._current_session_title()
-        count = len(db.get_messages(self.current_session)) if self.current_session else 0
 
         self.chat_title_label.setText(title)
         self.chat_subtitle_label.setText(

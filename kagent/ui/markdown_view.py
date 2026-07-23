@@ -6,7 +6,6 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import TextLexer, get_lexer_by_name, guess_lexer
 
-
 _FORMATTER = HtmlFormatter(nowrap=True, style="monokai")
 _CODE_RE = re.compile(r"<pre><code(?:\s+class=\"([^\"]+)\")?>(.*?)</code></pre>", re.DOTALL)
 

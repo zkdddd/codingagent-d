@@ -7,7 +7,6 @@ from .project_map import ProjectMap, build_project_map, summarize_project_map
 from .run_analytics import build_run_analytics
 from .run_history import list_run_history
 
-
 IMPROVEMENT_PRIORITIES = {
     "failure_trends": 100,
     "failed_runs": 95,

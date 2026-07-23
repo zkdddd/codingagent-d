@@ -4,7 +4,6 @@ import hashlib
 import json
 from typing import Any
 
-
 MAX_HISTORY = 20
 REPEAT_THRESHOLD = 2
 

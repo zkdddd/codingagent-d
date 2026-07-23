@@ -8,7 +8,6 @@ from typing import Literal
 
 from .project_map import build_project_map
 
-
 SymbolKind = Literal[
     "class",
     "function",

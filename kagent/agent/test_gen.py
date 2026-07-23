@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 from typing import Any
 
 from .project_map import build_project_map
-from .symbol_index import Symbol, build_symbol_index
-
+from .symbol_index import build_symbol_index
 
 # Symbol kinds worth generating a test scaffold for (skip imports/consts/etc).
 _TESTABLE_KINDS = {"class", "function", "method"}
