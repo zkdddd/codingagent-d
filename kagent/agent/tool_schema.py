@@ -1,6 +1,38 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
+
+import jsonschema
+
+
+@lru_cache(maxsize=1)
+def _schema_by_name() -> dict[str, dict[str, Any]]:
+    return {
+        str(item["function"]["name"]): item["function"].get("parameters") or {}
+        for item in tool_schema()
+    }
+
+
+def validate_tool_args(name: str, args: Any) -> list[str]:
+    """Validate tool arguments against the declared JSON-Schema.
+
+    Returns a list of human-readable error strings (empty if valid). Unknown
+    tools are not validated (returns []), so adding a tool before its schema is
+    wired does not block dispatch. Uses jsonschema Draft202012Validator for
+    type/required/additionalProperties/minimum/maximum/enum enforcement.
+    """
+    if not isinstance(args, dict):
+        return [f"arguments must be a JSON object, got {type(args).__name__}"]
+    schema = _schema_by_name().get(name)
+    if not schema:
+        return []
+    validator = jsonschema.Draft202012Validator(schema)
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(args), key=lambda e: list(e.path)):
+        location = "/".join(str(p) for p in error.path) or "(root)"
+        errors.append(f"{location}: {error.message}")
+    return errors
 
 
 def tool_schema() -> list[dict[str, Any]]:

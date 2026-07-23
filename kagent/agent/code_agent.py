@@ -58,6 +58,7 @@ from .task_plan import (
 )
 from .test_telemetry import parse_junit_xml, prepare_pytest_junit_command
 from .tool_schema import tool_schema
+from .tool_schema import validate_tool_args
 from .tool_loop_guard import loop_warning_prompt, record_tool_call
 from .tool_result_context import tool_result_json_for_model
 from .tool_view import tool_display_args, tool_preview_text, tool_report_section
@@ -1891,17 +1892,39 @@ class CodeAgent:
                     result = {"ok": False, "error": f"Invalid JSON arguments: {exc}", "raw_arguments": raw_args}
                     result_ok = self._tool_result_ok(name, result)
                 else:
-                    result, result_ok, display_args, preview_text = self._execute_tool_action(
-                        call_id=tool_call.id,
-                        name=name,
-                        args=args,
-                        round_idx=round_idx + 1,
-                        messages=messages,
-                        report_parts=report_parts,
-                        emit=emit,
-                        on_event=on_event,
-                        symbol_plans=state.symbol_change_plans or [],
-                    )
+                    schema_errors = validate_tool_args(name, args)
+                    if schema_errors:
+                        display_args = tool_display_args(self.workspace, name, args)
+                        self._emit_event(
+                            on_event,
+                            {
+                                "type": "tool_start",
+                                "call_id": tool_call.id,
+                                "name": name,
+                                "args": display_args,
+                                "round": round_idx + 1,
+                            },
+                        )
+                        joined = "; ".join(schema_errors)
+                        result = {
+                            "ok": False,
+                            "error": f"Invalid tool arguments: {joined}",
+                            "validation_errors": schema_errors,
+                        }
+                        result_ok = False
+                        preview_text = None
+                    else:
+                        result, result_ok, display_args, preview_text = self._execute_tool_action(
+                            call_id=tool_call.id,
+                            name=name,
+                            args=args,
+                            round_idx=round_idx + 1,
+                            messages=messages,
+                            report_parts=report_parts,
+                            emit=emit,
+                            on_event=on_event,
+                            symbol_plans=state.symbol_change_plans or [],
+                        )
                     tool_action_emitted = True
                 self._record_tool_loop_guard(
                     state,

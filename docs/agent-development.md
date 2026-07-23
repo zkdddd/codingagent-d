@@ -3193,6 +3193,44 @@ python -m pytest -q
 
 下一步可选：tool 参数 JSON-Schema 运行时校验（code_agent.py 只 json.loads 不校验 schema）、mypy/ruff 工程门、gentest 验证回路增强。
 
+## 2026-07-23: Tool Argument Schema Validation
+
+### 做了什么
+
+- `tool_schema.py` 新增 `validate_tool_args(name, args) -> list[str]`：用 `jsonschema.Draft202012Validator` 按工具声明的 `parameters` JSON-Schema 校验——required 缺失、类型错、additionalProperties 违反、min/max/enum 越界都能抓；未知工具不校验（返回 []，避免新工具没接 schema 时阻断 dispatch）；非 dict args 直接报错。用 `lru_cache` 缓存 name→schema，避免每次调用重算 22+ 工具 schema。
+- `code_agent.py` 在 `json.loads` 成功后、`_execute_tool_action` 前插入校验：schema 校验失败则发 tool_start 事件 + 构造 `{ok: False, error: "Invalid tool arguments: ...", validation_errors: [...]}` 结果，**不执行工具**，复用现有 `invalid_arguments` 恢复提示路径让模型修参数重试。
+- `requirements.txt` 加 `jsonschema>=4.20`。
+
+### 为什么做
+
+- 之前 `tool_schema.py` 声明了完整 JSON-Schema（type/required/additionalProperties/min/max/enum），但 `code_agent.py` 只 `json.loads` 解析、从不按 schema 校验——schema 是"声明但不强制"的死契约。模型瞎传参（缺 required、类型错、传未声明参数）会一路打到工具实现里才报错，错误信息不友好。
+- 接 jsonschema 校验把"声明"变成"运行时强制"：失败在 dispatch 前拦截，给模型结构化的"哪个参数什么错"提示。叙事是"运行时输入契约校验 / 测试左移"——和测试开发的"契约测试 / 输入校验"同构，且强化"工具安全"支柱。
+
+### 影响模块
+
+- `kagent/agent/tool_schema.py`（validate_tool_args + lru_cache）
+- `kagent/agent/code_agent.py`（json.loads 后插入校验）
+- `requirements.txt`
+- `tests/test_tool_schema_validation.py`（新增）
+- `README.md`
+- `docs/agent-development.md`
+
+### 验证
+
+已完成针对性验证和全量验证：
+
+```text
+python -m pytest -q tests/test_tool_schema_validation.py
+9 passed
+
+python -m pytest -q
+262 passed
+```
+
+### 后续
+
+下一步可选：mypy/ruff 工程门（替换 verify.ps1 的 compileall+pytest-only）、gentest 验证回路增强、真实 run 积累 failure-memory 语料。
+
 ## 2026-07-23: Test Failure Memory (RAG failure-memory)
 
 ### 做了什么
